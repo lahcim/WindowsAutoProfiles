@@ -1218,6 +1218,41 @@ Describe 'interactive Windows Sandbox capture' {
         $stateRaw | Should Not Match '"Length"\s*:'
     }
 
+    It 'saves multiple newly installed packages as a JSON array' {
+        $repo = Join-Path $TestDrive 'profile-multi-package-state'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/electronics') -Force | Out-Null
+        @(
+            'name: electronics'
+            'apps:'
+            '  - id: ArduinoSA.IDE.stable'
+            '    source: winget'
+            '    enabled: true'
+            '  - id: KiCad.KiCad'
+            '    source: winget'
+            '    enabled: true'
+        ) | Set-Content -LiteralPath (Join-Path $repo 'profiles/electronics/profile.yaml')
+
+        $fakeWinget = Join-Path $repo 'winget.cmd'
+        $env:WAP_TEST_FAKE_WINGET = $fakeWinget
+        @(
+            '@echo off'
+            'if "%1"=="list" exit /b 1'
+            'exit /b 0'
+        ) | Set-Content -LiteralPath $fakeWinget -Encoding ASCII
+        Mock Get-Command { [pscustomobject]@{ Source = $env:WAP_TEST_FAKE_WINGET } } -ParameterFilter { $Name -eq 'winget' } -ModuleName WindowsAutoProfiles
+
+        Install-WapProfile -Name electronics -RepositoryRoot $repo
+        $stateRaw = Get-Content -LiteralPath (Join-Path $repo '.wap-state.json') -Raw
+        $state = $stateRaw | ConvertFrom-Json
+
+        @($state.profiles.electronics.installedPackages).Count | Should Be 2
+        $state.profiles.electronics.installedPackages[0] | Should Be 'ArduinoSA.IDE.stable'
+        $state.profiles.electronics.installedPackages[1] | Should Be 'KiCad.KiCad'
+        $stateRaw | Should Not Match 'ArduinoSA\.IDE\.stableKiCad\.KiCad'
+    }
+
     It 'installs winget packages owned by enabled captures without adding them to profile apps' {
         $repo = Join-Path $TestDrive 'profile-capture-winget-install'
         New-Item -ItemType Directory -Path $repo -Force | Out-Null
@@ -1457,6 +1492,48 @@ Describe 'capture deletion' {
     }
 }
 Describe 'profile uninstall' {
+    It 'uninstalls packages from legacy concatenated installed package state' {
+        $repo = Join-Path $TestDrive 'uninstall-concatenated-packages'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/electronics') -Force | Out-Null
+        @(
+            'name: electronics'
+            'apps:'
+            '  - id: ArduinoSA.IDE.stable'
+            '    source: winget'
+            '    enabled: true'
+            '  - id: KiCad.KiCad'
+            '    source: winget'
+            '    enabled: true'
+        ) | Set-Content -LiteralPath (Join-Path $repo 'profiles/electronics/profile.yaml')
+        $state = Get-WapState -RepositoryRoot $repo
+        $state.profiles.electronics = [ordered]@{
+            installed = $true
+            profileRoot = Join-Path $TestDrive 'electronics-workspace'
+            installedPackages = 'ArduinoSA.IDE.stableKiCad.KiCad'
+            shortcuts = @()
+            activation = $null
+        }
+        $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $repo '.wap-state.json')
+
+        $wingetLog = Join-Path $repo 'winget-uninstall.log'
+        $fakeWinget = Join-Path $repo 'winget.cmd'
+        $env:WAP_TEST_FAKE_WINGET = $fakeWinget
+        @(
+            '@echo off'
+            "echo %*>>`"$wingetLog`""
+            'exit /b 0'
+        ) | Set-Content -LiteralPath $fakeWinget -Encoding ASCII
+        Mock Get-Command { [pscustomobject]@{ Source = $env:WAP_TEST_FAKE_WINGET } } -ParameterFilter { $Name -eq 'winget' } -ModuleName WindowsAutoProfiles
+
+        Invoke-WapCli -Command profile -Arguments @('uninstall', 'electronics') -RepositoryRoot $repo
+        $wingetArgs = Get-Content -LiteralPath $wingetLog -Raw
+
+        $wingetArgs | Should Match 'uninstall --id ArduinoSA\.IDE\.stable --exact --disable-interactivity'
+        $wingetArgs | Should Match 'uninstall --id KiCad\.KiCad --exact --disable-interactivity'
+    }
+
     It 'automatically deactivates an active profile before uninstalling it' {
         $repo = Join-Path $TestDrive 'uninstall-active-profile'
         New-Item -ItemType Directory -Path $repo | Out-Null

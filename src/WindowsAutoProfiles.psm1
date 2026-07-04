@@ -1217,6 +1217,39 @@ function ConvertTo-WapStateStringArray {
     )
 }
 
+function Expand-WapOwnedPackageIds {
+    param(
+        [Parameter(Mandatory)][string[]] $OwnedPackages,
+        [Parameter(Mandatory)][string[]] $KnownPackageIds
+    )
+
+    $result = New-Object System.Collections.Generic.List[string]
+    foreach ($package in $OwnedPackages) {
+        if ($KnownPackageIds -contains $package) {
+            [void]$result.Add($package)
+            continue
+        }
+
+        $remaining = $package
+        $expanded = New-Object System.Collections.Generic.List[string]
+        foreach ($knownPackageId in $KnownPackageIds) {
+            if ($remaining.StartsWith($knownPackageId, [StringComparison]::OrdinalIgnoreCase)) {
+                [void]$expanded.Add($knownPackageId)
+                $remaining = $remaining.Substring($knownPackageId.Length)
+            }
+        }
+
+        if ($expanded.Count -gt 0 -and [string]::IsNullOrWhiteSpace($remaining)) {
+            foreach ($expandedPackage in $expanded) { [void]$result.Add($expandedPackage) }
+        }
+        else {
+            [void]$result.Add($package)
+        }
+    }
+
+    return @($result.ToArray() | Select-Object -Unique)
+}
+
 function Set-WapUserEnvironment {
     param([string] $Name, [AllowNull()][string] $Value)
     [Environment]::SetEnvironmentVariable($Name, $Value, 'User')
@@ -1706,9 +1739,14 @@ function Install-WapProfile {
     $profile = Import-WapProfile -Name $Name -RepositoryRoot $RepositoryRoot
     $state = Get-WapState $RepositoryRoot
     $existing = Get-WapProfileState $state $Name
-    $installedPackages = if ($existing) { @(ConvertTo-WapStateStringArray $existing.installedPackages) } else { @() }
-    $createdDirectories = if ($existing) { @(ConvertTo-WapStateStringArray $existing.createdDirectories) } else { @() }
-    $createdShortcuts = if ($existing) { @(ConvertTo-WapStateStringArray $existing.shortcuts) } else { @() }
+    $installedPackages = New-Object System.Collections.Generic.List[string]
+    $createdDirectories = New-Object System.Collections.Generic.List[string]
+    $createdShortcuts = New-Object System.Collections.Generic.List[string]
+    if ($existing) {
+        foreach ($package in @(ConvertTo-WapStateStringArray $existing.installedPackages)) { [void]$installedPackages.Add($package) }
+        foreach ($directory in @(ConvertTo-WapStateStringArray $existing.createdDirectories)) { [void]$createdDirectories.Add($directory) }
+        foreach ($shortcut in @(ConvertTo-WapStateStringArray $existing.shortcuts)) { [void]$createdShortcuts.Add($shortcut) }
+    }
 
     Write-Host "Installing profile '$Name'..."
     Write-Host "  Profile root: $($profile.profileRoot)"
@@ -1722,7 +1760,7 @@ function Install-WapProfile {
         Write-Host "    [create] $directory"
         if ($PSCmdlet.ShouldProcess($directory, 'Create directory')) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
-            $createdDirectories += $directory
+            [void]$createdDirectories.Add($directory)
         }
     }
 
@@ -1752,7 +1790,7 @@ function Install-WapProfile {
                 Write-WapProfileInstallStatus -ItemType 'package' -State 'installing' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
                 $installArguments = Get-WapWingetInstallArguments -Id $app.id -Source $app.source
                 Invoke-WapWingetInstall -WingetPath $winget.Source -Arguments $installArguments -PackageId $app.id -Source $app.source
-                $installedPackages += $app.id
+                [void]$installedPackages.Add($app.id)
                 Write-Host "    [installed] $($app.id)"
                 Write-WapProfileInstallStatus -ItemType 'package' -State 'installed' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
             }
@@ -1806,7 +1844,7 @@ function Install-WapProfile {
                     Write-WapProfileInstallStatus -ItemType 'capture package' -State 'installing' -ItemId $statusItemId -Index $capturePackageIndex -Total $capturePackages.Count
                     $installArguments = Get-WapWingetInstallArguments -Id $package.id -Source $package.source
                     Invoke-WapWingetInstall -WingetPath $winget.Source -Arguments $installArguments -PackageId $package.id -Source $package.source
-                    $installedPackages += $package.id
+                    [void]$installedPackages.Add($package.id)
                     Write-Host "        [installed] $($package.id)"
                     Write-WapProfileInstallStatus -ItemType 'capture package' -State 'installed' -ItemId $statusItemId -Index $capturePackageIndex -Total $capturePackages.Count
                 }
@@ -1824,7 +1862,7 @@ function Install-WapProfile {
     foreach ($shortcut in $profile.shortcuts) {
         Write-Host "    [create] $($shortcut.name)"
         if ($PSCmdlet.ShouldProcess($shortcut.name, 'Create shortcut')) {
-            $createdShortcuts += Install-WapShortcut $shortcut
+            [void]$createdShortcuts.Add((Install-WapShortcut $shortcut))
         }
     }
 
@@ -1844,10 +1882,10 @@ function Install-WapProfile {
             profileRoot = $profile.profileRoot
             sharedRoot = $profile.sharedRoot
             directories = @($profile.directories.Values)
-            createdDirectories = @($createdDirectories)
+            createdDirectories = @($createdDirectories.ToArray())
             packages = @($enabledApps | ForEach-Object { $_.id })
-            installedPackages = @($installedPackages)
-            shortcuts = @($createdShortcuts)
+            installedPackages = @($installedPackages.ToArray())
+            shortcuts = @($createdShortcuts.ToArray())
             captures = @($enabledCapturePlan)
             activation = $existingActivation
             installedAt = (Get-Date).ToUniversalTime().ToString('o')
@@ -2236,11 +2274,12 @@ function Uninstall-WapProfile {
     $packagesUsedElsewhere = @(foreach ($otherName in $state.profiles.Keys) {
         if ($otherName -ne $Name) { $state.profiles[$otherName].packages }
     })
-    $ownedPackages = @($profileState.installedPackages)
+    $ownedPackages = @(ConvertTo-WapStateStringArray $profileState.installedPackages)
     $enabledPackageIds = @()
     try {
         $currentProfile = Import-WapProfile -Name $Name -RepositoryRoot $RepositoryRoot
         $enabledPackageIds = @($currentProfile.apps | Where-Object { $_.enabled } | ForEach-Object { $_.id })
+        $ownedPackages = @(Expand-WapOwnedPackageIds -OwnedPackages $ownedPackages -KnownPackageIds $enabledPackageIds)
     }
     catch {
         Write-Warning "Could not load current profile definition to filter enabled packages: $($_.Exception.Message)"
