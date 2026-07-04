@@ -1,0 +1,45 @@
+name: Regression tests
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  pester:
+    name: Pester regression tests
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Ensure Pester 3 is available
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pester = Get-Module -ListAvailable Pester |
+            Where-Object { $_.Version -eq [version]'3.4.0' } |
+            Select-Object -First 1
+
+          if (-not $pester) {
+            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
+            Install-Module -Name Pester -RequiredVersion 3.4.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+
+      - name: Run regression tests
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module Pester -RequiredVersion 3.4.0 -ErrorAction Stop
+          $result = Invoke-Pester -Script @(
+            '.\tests\WindowsAutoProfiles.Tests.ps1',
+            '.\tests\CapturePowerShell51.Tests.ps1'
+          ) -PassThru
+
+          if ($result.FailedCount -gt 0) {
+            throw "$($result.FailedCount) regression test(s) failed."
+          }
