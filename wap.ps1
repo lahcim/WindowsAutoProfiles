@@ -17,7 +17,7 @@ Import-Module (Join-Path $PSScriptRoot 'src/WindowsAutoProfiles.psm1') -Force
 
 $log = $null
 $exitCode = 0
-$invokeArguments = @($Arguments)
+$invokeArguments = if ($null -eq $Arguments) { @() } else { @($Arguments) }
 $loggingDisabled = $invokeArguments -contains '--no-log'
 $invokeArguments = @($invokeArguments | Where-Object { $_ -ne '--no-log' })
 

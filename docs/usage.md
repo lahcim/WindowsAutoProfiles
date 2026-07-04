@@ -5,7 +5,7 @@ and expected command output.
 
 Version: 1.1
 
-Last updated: 2026-07-04T04:14:10Z
+Last updated: 2026-07-04T04:48:53Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -35,7 +35,7 @@ dispatching each command.
 .\wap.ps1 config set sandbox.installWinget <true|false> [-WhatIf]
 .\wap.ps1 logs cleanup [-WhatIf]
 
-.\wap.ps1 profile install <name> [-WhatIf]
+.\wap.ps1 profile install <name> [--sandbox] [-WhatIf]
 .\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]
 .\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all] [-WhatIf]
 .\wap.ps1 profile new <name> [-WhatIf]
@@ -416,6 +416,30 @@ Preview first:
 ```powershell
 .\wap.ps1 profile install developer -WhatIf
 ```
+
+Test the install in Windows Sandbox without changing the host:
+
+```powershell
+.\wap.ps1 profile install developer --sandbox
+```
+
+This creates `.sandbox\profile-install\developer`, stages the same winget
+prerequisites used by capture Sandbox bootstrapping, mounts the repository as
+`C:\WAPRepo`, mounts profile definitions as `C:\WAPProfiles`, then opens a
+visible Sandbox PowerShell window. Inside Sandbox it copies scripts to a
+Sandbox-local repo, writes temporary Sandbox-local WAP config, runs
+`.\wap.ps1 init`, and runs `.\wap.ps1 profile install developer`. The temporary
+config points `profilesRoot` at `C:\WAPProfiles` and `workspaceRoot` at
+`C:\WAPProfileSandbox\workspaces`, so host config paths that point to OneDrive
+or other external locations do not leak into the Sandbox test. The host command
+also prints phase changes and points to
+`.sandbox\profile-install\developer\output\profile-install.log`.
+
+After the initial install completes, the Sandbox PowerShell window remains open
+at `C:\WAPProfileSandbox\repo`. You can manually run `profile list`,
+`profile install`, `profile activate`, `profile deactivate`, and
+`profile uninstall` against any mounted profile under `C:\WAPProfiles`. See
+`docs\profile-sandbox-testing.md` for the full workflow.
 
 ### Activate a profile
 

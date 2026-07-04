@@ -174,6 +174,11 @@ Describe 'state, init, and capture' {
         Assert-MockCalled Add-AppxPackage 1 -ModuleName WindowsAutoProfiles
         Assert-MockCalled Install-Module 0 -ModuleName WindowsAutoProfiles
 
+        $nullArgsRepo = Join-Path $TestDrive 'init-null-args'
+        New-Item -ItemType Directory -Path $nullArgsRepo | Out-Null
+        Invoke-WapCli -Command init -Arguments $null -RepositoryRoot $nullArgsRepo
+        (Join-Path $nullArgsRepo 'wap.config.json') | Should Exist
+
         $skipRepo = Join-Path $TestDrive 'init-skip-prereqs'
         New-Item -ItemType Directory -Path $skipRepo | Out-Null
         Invoke-WapCli -Command init -Arguments @('--skip-prereqs') -RepositoryRoot $skipRepo
@@ -449,7 +454,7 @@ Describe 'interactive Windows Sandbox capture' {
                     profilePath = 'C:\Users\WDAGUtilityAccount'
                 }
             } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $baselineRoot 'snapshot.json') -Encoding UTF8
-            $process = New-Object psobject -Property @{ HasExited = $false }
+            $process = New-Object psobject -Property @{ HasExited = $true }
             $process | Add-Member -MemberType ScriptMethod -Name Refresh -Value {}
             return $process
         } -ModuleName WindowsAutoProfiles
@@ -875,6 +880,68 @@ Describe 'interactive Windows Sandbox capture' {
         $wingetArgs | Should Match 'list --id Python\.Python\.3\.13 --exact --accept-source-agreements'
         $wingetArgs | Should Match 'install -e --id Python\.Python\.3\.13 --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity'
         $output.IndexOf('Packages: 1 declared') | Should BeLessThan $output.IndexOf('Attached captures: 1 declared')
+    }
+
+    It 'launches a sandbox profile install test with mounted scripts and profiles' {
+        $repo = Join-Path $TestDrive 'profile-install-sandbox'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/dev') -Force | Out-Null
+        @(
+            'name: dev'
+            'apps:'
+            '  - id: Python.Python.3.13'
+            '    source: winget'
+        ) | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml')
+        Mock Save-WapSandboxWingetPrerequisites {} -ModuleName WindowsAutoProfiles
+        Mock Get-Command { [pscustomobject]@{ Source = 'WindowsSandbox.exe' } } `
+            -ParameterFilter { $Name -eq 'WindowsSandbox.exe' } -ModuleName WindowsAutoProfiles
+        Mock Start-Process {
+            $wsbPath = if ($ArgumentList -is [array]) { $ArgumentList[0] } else { $ArgumentList }
+            $sessionRoot = Split-Path -Parent $wsbPath
+            $outputRoot = Join-Path $sessionRoot 'output'
+            New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+            [ordered]@{
+                phase = 'completed'
+                success = $true
+                updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+                error = $null
+            } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputRoot 'status.json') -Encoding UTF8
+            $process = New-Object psobject -Property @{ HasExited = $false }
+            $process | Add-Member -MemberType ScriptMethod -Name Refresh -Value {}
+            return $process
+        } -ModuleName WindowsAutoProfiles
+
+        $output = (Invoke-WapCli -Command profile -Arguments @('install', 'dev', '--sandbox') -RepositoryRoot $repo *>&1 | Out-String)
+
+        $sessionRoot = Join-Path $repo '.sandbox/profile-install/dev'
+        (Join-Path $sessionRoot 'Profile-Install-Startup.ps1') | Should Exist
+        (Join-Path $sessionRoot 'sandbox.wsb') | Should Exist
+        $startup = Get-Content -LiteralPath (Join-Path $sessionRoot 'Profile-Install-Startup.ps1') -Raw
+        $startup | Should Match 'wap.ps1 init'
+        $startup | Should Match 'WAP_WINGET_PREREQ_ROOT'
+        $startup | Should Match 'profile install'
+        $startup | Should Match 'profile activate <profile>'
+        $startup | Should Match 'profile deactivate <profile>'
+        $startup | Should Match 'profile uninstall <profile>'
+        $startup | Should Match 'profile-testing\.md'
+        $startup | Should Match 'C:\\WAPProfiles'
+        $startup | Should Match "'wap.ps1', 'src', 'templates', 'docs', 'README.md'"
+        $startup | Should Not Match "Copy-Item -Path 'C:\\WAPRepo\\\*'"
+        $startup | Should Match 'if \(-not \$\?\)'
+        $startup | Should Not Match 'LASTEXITCODE -ne 0'
+        $startup.IndexOf("Set-Content -LiteralPath (Join-Path `$sandboxRepo 'wap.config.json')") | Should BeLessThan $startup.IndexOf('& .\wap.ps1 init')
+        $wsb = Get-Content -LiteralPath (Join-Path $sessionRoot 'sandbox.wsb') -Raw
+        $wsb | Should Match ([regex]::Escape('<SandboxFolder>C:\WAPProfileSandbox</SandboxFolder>'))
+        $wsb | Should Match ([regex]::Escape('<SandboxFolder>C:\WAPRepo</SandboxFolder>'))
+        $wsb | Should Match ([regex]::Escape('<SandboxFolder>C:\WAPProfiles</SandboxFolder>'))
+        $wsb | Should Match '-NoExit'
+        $output | Should Match 'Sandbox launched'
+        $output | Should Match 'SANDBOX PROFILE INSTALL COMPLETE'
+        $output | Should Match 'manual profile lifecycle testing'
+        $output | Should Match 'C:\\WAPProfileSandbox\\profile-testing\.md'
+        Assert-MockCalled Save-WapSandboxWingetPrerequisites 1 -ModuleName WindowsAutoProfiles -Scope It
+        Assert-MockCalled Start-Process 1 -ModuleName WindowsAutoProfiles -Scope It
     }
 }
 

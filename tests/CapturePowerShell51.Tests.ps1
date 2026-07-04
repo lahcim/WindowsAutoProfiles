@@ -1,6 +1,48 @@
 # Author: Michal Zygmunt <lahcim@fajne.com>
 
 Describe 'capture script Windows PowerShell 5.1 compatibility' {
+    It 'loads WAP state JSON under Windows PowerShell 5.1' {
+        $modulePath = (Resolve-Path "$PSScriptRoot/../src/WindowsAutoProfiles.psm1").Path
+        $repo = Join-Path $TestDrive 'wap-state-ps51'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        [ordered]@{
+            version = 1
+            activeProfile = $null
+            profiles = [ordered]@{
+                demo = [ordered]@{
+                    installedAt = '2026-07-04T00:00:00Z'
+                    packages = @()
+                }
+            }
+            registry = [ordered]@{
+                enabled = $false
+            }
+        } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $repo '.wap-state.json') -Encoding UTF8
+
+        $verifier = Join-Path $TestDrive 'Verify-WapState.ps1'
+        @'
+param(
+    [Parameter(Mandatory)][string] $ModulePath,
+    [Parameter(Mandatory)][string] $RepositoryRoot
+)
+$ErrorActionPreference = 'Stop'
+Import-Module $ModulePath -Force
+$state = Get-WapState -RepositoryRoot $RepositoryRoot
+if (-not $state.Contains('profiles')) {
+    throw 'State did not load profiles as a hashtable.'
+}
+if (-not $state.profiles.Contains('demo')) {
+    throw 'State did not preserve profile keys under PowerShell 5.1.'
+}
+'@ | Set-Content -LiteralPath $verifier -Encoding UTF8
+
+        $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File $verifier -ModulePath $modulePath -RepositoryRoot $repo 2>&1
+
+        if ($LASTEXITCODE -ne 0) { Write-Host ($output -join "`n") }
+        $LASTEXITCODE | Should Be 0
+    }
+
     It 'parses every capture template with the Windows PowerShell 5.1 parser' {
         $templateRoot = (Resolve-Path "$PSScriptRoot/../templates/capture").Path
         $verifier = Join-Path $TestDrive 'Verify-Parser.ps1'

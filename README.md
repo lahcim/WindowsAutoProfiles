@@ -5,7 +5,7 @@ workspaces from versioned YAML profiles.
 
 Version: 1.1
 
-Last updated: 2026-07-04T04:14:10Z
+Last updated: 2026-07-04T04:48:53Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -233,6 +233,7 @@ activation. It does not uninstall packages, delete folders, or remove shortcuts.
 .\wap.ps1 profile winget list developer
 .\wap.ps1 profile show developer
 .\wap.ps1 profile install developer -WhatIf
+.\wap.ps1 profile install developer --sandbox
 .\wap.ps1 profile install developer
 .\wap.ps1 profile activate developer
 .\wap.ps1 profile deactivate developer
@@ -249,6 +250,11 @@ activation. It does not uninstall packages, delete folders, or remove shortcuts.
 .\wap.ps1 profile winget remove developer Python.Python.3.13
 .\wap.ps1 capture remove electronics-kicad
 ```
+
+Use `profile install <name> --sandbox` to open a disposable Windows Sandbox
+that installs one profile first, then remains open for manual
+install/activate/deactivate/uninstall testing of any mounted profile. See
+`docs\profile-sandbox-testing.md`.
 
 ## Windows Sandbox capture
 

@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 
 $script:WapMinimumPowerShellVersion = [version]'5.1'
 $script:WapVersion = '1.1'
-$script:WapLastUpdated = '2026-07-04T04:14:10Z'
+$script:WapLastUpdated = '2026-07-04T04:51:45Z'
 
 function Assert-WapPowerShellVersion {
     param(
@@ -53,6 +53,30 @@ function Expand-WapConfigValue {
         return $envValue
     }, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     return $expanded
+}
+
+function ConvertTo-WapOrderedHashtable {
+    param([AllowNull()] $Value)
+
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $result = [ordered]@{}
+        foreach ($key in $Value.Keys) {
+            $result[$key] = ConvertTo-WapOrderedHashtable $Value[$key]
+        }
+        return $result
+    }
+    if ($Value -is [pscustomobject]) {
+        $result = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties) {
+            $result[$property.Name] = ConvertTo-WapOrderedHashtable $property.Value
+        }
+        return $result
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        return ,@($Value | ForEach-Object { ConvertTo-WapOrderedHashtable $_ })
+    }
+    return $Value
 }
 
 function Resolve-WapConfigPathValue {
@@ -374,6 +398,27 @@ function Test-WapWingetAvailable {
     return $null -ne (Get-Command winget -ErrorAction SilentlyContinue)
 }
 
+function Install-WapWingetFromLocalPackages {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $PrereqRoot)
+
+    $vclibs = Join-Path $PrereqRoot 'Microsoft.VCLibs.140.00_14.0.33519.0_x64.appx'
+    $vclibsDesktop = Join-Path $PrereqRoot 'Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64.appx'
+    $windowsAppRuntime = Join-Path $PrereqRoot 'Microsoft.WindowsAppRuntime.1.8_8000.616.304.0_x64.appx'
+    $appInstaller = Join-Path $PrereqRoot 'Microsoft.DesktopAppInstaller.msixbundle'
+    foreach ($package in @($vclibs, $vclibsDesktop, $windowsAppRuntime, $appInstaller)) {
+        if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
+            throw "Required winget prerequisite package was not found: $package"
+        }
+    }
+
+    Write-Host "  [install] Installing winget from local package prerequisites at '$PrereqRoot'..."
+    Add-AppxPackage -Path $vclibs
+    Add-AppxPackage -Path $vclibsDesktop
+    Add-AppxPackage -Path $windowsAppRuntime
+    Add-AppxPackage -Path $appInstaller -DependencyPath @($vclibs, $vclibsDesktop, $windowsAppRuntime)
+}
+
 function Install-WapWingetPrerequisite {
     [CmdletBinding(SupportsShouldProcess)]
     param()
@@ -404,6 +449,17 @@ function Install-WapWingetPrerequisite {
     if (Test-WapWingetAvailable) {
         Write-Host '  [ok] winget is now available.'
         return
+    }
+
+    $localPrereqRoot = [Environment]::GetEnvironmentVariable('WAP_WINGET_PREREQ_ROOT', 'Process')
+    if ($localPrereqRoot) {
+        if ($PSCmdlet.ShouldProcess($localPrereqRoot, 'Install Windows Package Manager from local packages')) {
+            Install-WapWingetFromLocalPackages -PrereqRoot $localPrereqRoot
+        }
+        if (Test-WapWingetAvailable) {
+            Write-Host '  [ok] winget is now available.'
+            return
+        }
     }
 
     Write-Host '  [install] Trying Microsoft.WinGet.Client Repair-WinGetPackageManager fallback...'
@@ -1090,7 +1146,7 @@ function Get-WapState {
     $path = Join-Path $RepositoryRoot '.wap-state.json'
     if (-not (Test-Path -LiteralPath $path)) { return New-WapState }
     try {
-        $state = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
+        $state = ConvertTo-WapOrderedHashtable (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
         if (-not $state.Contains('profiles')) { $state.profiles = [ordered]@{} }
         return $state
     }
@@ -1953,6 +2009,361 @@ function Wait-WapCaptureBaseline {
     }
     finally {
         Write-Progress -Activity 'WindowsAutoProfiles Sandbox capture' -Completed
+    }
+}
+
+function Wait-WapProfileSandboxInstall {
+    param(
+        [Parameter(Mandatory)][string] $SessionRoot,
+        $SandboxProcess,
+        [int] $TimeoutSeconds = 1800
+    )
+
+    $statusPath = Join-Path $SessionRoot 'output/status.json'
+    $logPath = Join-Path $SessionRoot 'output/profile-install.log'
+    $errorPath = Join-Path $SessionRoot 'output/profile-install-error.txt'
+    $started = Get-Date
+    $lastReport = -15
+    $lastPhase = $null
+    $processExitedAt = $null
+    $reportedProcessExit = $false
+    Write-Host "Waiting for Sandbox profile install to finish (timeout: $TimeoutSeconds seconds)..."
+    try {
+        while ($true) {
+            if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
+                try {
+                    $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
+                    if ($status.phase -and $status.phase -ne $lastPhase) {
+                        Write-Host "  Sandbox profile install phase: $($status.phase)"
+                        Write-Host "  Sandbox install log: $logPath"
+                        $lastPhase = $status.phase
+                    }
+                    if ($status.success -eq $true -and $status.phase -eq 'completed') {
+                        Write-Host ''
+                        Write-Host '=== SANDBOX PROFILE INSTALL COMPLETE ===' -ForegroundColor Green
+                        Write-Host "Detailed Sandbox install log: $logPath"
+                        Write-Host 'The Sandbox window remains open for manual profile lifecycle testing.'
+                        Write-Host 'Inside Sandbox, run commands from C:\WAPProfileSandbox\repo, for example:'
+                        Write-Host '  .\wap.ps1 profile list'
+                        Write-Host '  .\wap.ps1 profile install <profile>'
+                        Write-Host '  .\wap.ps1 profile activate <profile>'
+                        Write-Host '  .\wap.ps1 profile deactivate <profile>'
+                        Write-Host '  .\wap.ps1 profile uninstall <profile>'
+                        Write-Host 'Command guide inside Sandbox: C:\WAPProfileSandbox\profile-testing.md'
+                        return
+                    }
+                    if ($status.success -eq $false -and $status.phase -eq 'failed') {
+                        $details = if (Test-Path -LiteralPath $errorPath -PathType Leaf) {
+                            (Get-Content -LiteralPath $errorPath -Raw -ErrorAction SilentlyContinue).Trim()
+                        }
+                        else { [string]$status.error }
+                        if ($details.Length -gt 700) { $details = $details.Substring(0, 700) + '...' }
+                        throw "Sandbox profile install failed. $details`nDetailed Sandbox install log: $logPath`nDetailed Sandbox install error: $errorPath"
+                    }
+                }
+                catch {
+                    if ($_.Exception.Message -like 'Sandbox profile install failed.*') { throw }
+                    # The Sandbox may still be writing the status file; retry.
+                }
+            }
+
+            if ($SandboxProcess) {
+                try {
+                    $SandboxProcess.Refresh()
+                    if ($SandboxProcess.HasExited) {
+                        if (-not $processExitedAt) {
+                            $processExitedAt = Get-Date
+                        }
+                        if (-not $reportedProcessExit) {
+                            Write-Warning 'WindowsSandbox.exe launcher process exited; continuing to monitor Sandbox status files.'
+                            $reportedProcessExit = $true
+                        }
+                    }
+                }
+                catch {
+                    Write-Warning "Could not refresh Windows Sandbox process state: $($_.Exception.Message)"
+                }
+            }
+
+            $elapsed = [int]((Get-Date) - $started).TotalSeconds
+            if ($processExitedAt -and -not (Test-Path -LiteralPath $statusPath -PathType Leaf)) {
+                $elapsedSinceProcessExit = [int]((Get-Date) - $processExitedAt).TotalSeconds
+                if ($elapsedSinceProcessExit -ge 120) {
+                    throw "Windows Sandbox launcher exited and no Sandbox status file was created after 120 seconds. Check '$logPath' and '$SessionRoot'."
+                }
+            }
+            if ($elapsed -ge $TimeoutSeconds) {
+                throw "Timed out waiting for Sandbox profile install after $TimeoutSeconds seconds. Check '$logPath'."
+            }
+            if (($elapsed - $lastReport) -ge 15) {
+                $phase = if ($lastPhase) { $lastPhase } else { 'starting' }
+                Write-Host "  Still waiting for Sandbox profile install ($phase)... $elapsed seconds elapsed"
+                $lastReport = $elapsed
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
+    finally {
+        Write-Progress -Activity 'WindowsAutoProfiles Sandbox profile install' -Completed
+    }
+}
+
+function New-WapProfileSandboxStartupScript {
+    param([Parameter(Mandatory)][string] $ProfileName)
+
+    $escapedProfileName = $ProfileName.Replace("'", "''")
+    return @"
+#requires -Version 5.1
+`$ErrorActionPreference = 'Stop'
+`$profileName = '$escapedProfileName'
+`$sessionRoot = 'C:\WAPProfileSandbox'
+`$output = Join-Path `$sessionRoot 'output'
+`$statusPath = Join-Path `$output 'status.json'
+`$errorPath = Join-Path `$output 'profile-install-error.txt'
+`$logPath = Join-Path `$output 'profile-install.log'
+New-Item -ItemType Directory -Path `$output -Force | Out-Null
+
+function Write-InstallStatus {
+    param(
+        [Parameter(Mandatory)][string] `$Phase,
+        [Parameter(Mandatory)][bool] `$Success,
+        [AllowNull()][string] `$ErrorMessage
+    )
+
+    [pscustomobject]@{
+        phase = `$Phase
+        success = `$Success
+        updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+        error = `$ErrorMessage
+        log = `$logPath
+        errorLog = `$errorPath
+    } | ConvertTo-Json | Set-Content -LiteralPath `$statusPath -Encoding UTF8
+}
+
+Write-Host ''
+Write-Host '=== WindowsAutoProfiles Sandbox profile install ===' -ForegroundColor Cyan
+Write-Host "Profile: `$profileName"
+Write-Host "Detailed install log: `$logPath"
+Write-Host ''
+
+function Write-ManualTestingGuide {
+    `$guidePath = Join-Path `$sessionRoot 'profile-testing.md'
+    @(
+        '# WindowsAutoProfiles Sandbox profile testing'
+        ''
+        'The sandbox is configured with a temporary local WAP configuration.'
+        ''
+        '- Local repo: C:\WAPProfileSandbox\repo'
+        '- Mounted profiles: C:\WAPProfiles'
+        '- Sandbox workspaces: C:\WAPProfileSandbox\workspaces'
+        '- Logs: C:\WAPProfileSandbox\output\logs'
+        ''
+        'Run these commands from C:\WAPProfileSandbox\repo:'
+        ''
+        '~~~powershell'
+        '.\wap.ps1 profile list'
+        '.\wap.ps1 profile show <profile>'
+        '.\wap.ps1 profile install <profile>'
+        '.\wap.ps1 profile activate <profile>'
+        '.\wap.ps1 profile deactivate <profile>'
+        '.\wap.ps1 profile uninstall <profile>'
+        '.\wap.ps1 profile uninstall <profile> --remove-user-data --remove-registry'
+        '~~~'
+        ''
+        'Profiles are mounted read-only from the host, so edit profile definitions on the'
+        'host and relaunch the sandbox test to pick up changes.'
+    ) | Set-Content -LiteralPath `$guidePath -Encoding UTF8
+
+    Write-Host ''
+    Write-Host '=== MANUAL PROFILE TESTING READY ===' -ForegroundColor Green
+    Write-Host 'This Sandbox PowerShell is configured for manual profile lifecycle testing.'
+    Write-Host "Run commands from: `$sandboxRepo"
+    Write-Host 'Mounted profiles: C:\WAPProfiles'
+    Write-Host "Command guide: `$guidePath"
+    Write-Host ''
+    Write-Host 'Examples:'
+    Write-Host '  .\wap.ps1 profile list'
+    Write-Host '  .\wap.ps1 profile install <profile>'
+    Write-Host '  .\wap.ps1 profile activate <profile>'
+    Write-Host '  .\wap.ps1 profile deactivate <profile>'
+    Write-Host '  .\wap.ps1 profile uninstall <profile>'
+    Write-Host ''
+}
+
+`$transcriptStarted = `$false
+try {
+    Start-Transcript -LiteralPath `$logPath -Force | Out-Null
+    `$transcriptStarted = `$true
+}
+catch {
+    Write-Warning "Transcript could not start: `$(`$_.Exception.Message)"
+}
+
+try {
+    Write-InstallStatus -Phase 'copyingRepo' -Success `$false -ErrorMessage `$null
+    Write-Host 'Phase: copying scripts into Sandbox-local repo.' -ForegroundColor Cyan
+    `$sandboxRepo = Join-Path `$sessionRoot 'repo'
+    if (Test-Path -LiteralPath `$sandboxRepo -PathType Container) {
+        Remove-Item -LiteralPath `$sandboxRepo -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path `$sandboxRepo -Force | Out-Null
+    foreach (`$repoItem in @('wap.ps1', 'src', 'templates', 'docs', 'README.md')) {
+        `$sourceItem = Join-Path 'C:\WAPRepo' `$repoItem
+        if (Test-Path -LiteralPath `$sourceItem) {
+            Copy-Item -LiteralPath `$sourceItem -Destination `$sandboxRepo -Recurse -Force
+        }
+    }
+
+    Write-InstallStatus -Phase 'configuring' -Success `$false -ErrorMessage `$null
+    Write-Host 'Phase: configuring Sandbox-local WAP settings before init.' -ForegroundColor Cyan
+    [ordered]@{
+        version = 1
+        configPath = 'wap.settings.json'
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path `$sandboxRepo 'wap.config.json') -Encoding UTF8
+    [ordered]@{
+        version = 1
+        workspaceRoot = 'C:\WAPProfileSandbox\workspaces'
+        profilesRoot = 'C:\WAPProfiles'
+        logging = [ordered]@{
+            enabled = `$true
+            retentionDays = 30
+            root = 'C:\WAPProfileSandbox\output\logs'
+        }
+        sandbox = [ordered]@{
+            installWinget = `$true
+        }
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path `$sandboxRepo 'wap.settings.json') -Encoding UTF8
+
+    Write-InstallStatus -Phase 'initializing' -Success `$false -ErrorMessage `$null
+    Write-Host 'Phase: running wap init inside Sandbox.' -ForegroundColor Cyan
+    `$env:WAP_WINGET_PREREQ_ROOT = Join-Path `$sessionRoot 'prereqs\winget'
+    Set-Location `$sandboxRepo
+    & .\wap.ps1 init
+    if (-not `$?) {
+        `$exitDescription = if (`$null -ne `$LASTEXITCODE) { " with exit code `$LASTEXITCODE" } else { '' }
+        throw "wap init failed`$exitDescription."
+    }
+
+    Write-InstallStatus -Phase 'installingProfile' -Success `$false -ErrorMessage `$null
+    Write-Host 'Phase: installing profile inside Sandbox.' -ForegroundColor Cyan
+    & .\wap.ps1 profile install `$profileName
+    if (-not `$?) {
+        `$exitDescription = if (`$null -ne `$LASTEXITCODE) { " with exit code `$LASTEXITCODE" } else { '' }
+        throw "profile install failed`$exitDescription."
+    }
+
+    Write-InstallStatus -Phase 'completed' -Success `$true -ErrorMessage `$null
+    Write-Host ''
+    Write-Host '=== PROFILE INSTALL COMPLETE ===' -ForegroundColor Green
+    Set-Location `$sandboxRepo
+    Write-ManualTestingGuide
+}
+catch {
+    `$message = `$_.Exception.Message
+    (`$_ | Out-String) | Set-Content -LiteralPath `$errorPath -Encoding UTF8
+    Write-InstallStatus -Phase 'failed' -Success `$false -ErrorMessage `$message
+    Write-Host ''
+    Write-Host '=== PROFILE INSTALL FAILED ===' -ForegroundColor Red
+    Write-Host `$message -ForegroundColor Red
+    Write-Host "Details: `$errorPath"
+    throw
+}
+finally {
+    if (`$sandboxRepo -and (Test-Path -LiteralPath `$sandboxRepo -PathType Container)) {
+        Set-Location `$sandboxRepo
+    }
+    if (`$transcriptStarted) { Stop-Transcript | Out-Null }
+}
+"@
+}
+
+function Start-WapProfileSandboxInstall {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string] $Name,
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [int] $TimeoutSeconds = 1800
+    )
+
+    $profile = Import-WapProfile -Name $Name -RepositoryRoot $RepositoryRoot
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    $sessionRoot = Join-Path (Join-Path $RepositoryRoot '.sandbox\profile-install') $Name
+    $profilesRoot = [IO.Path]::GetFullPath($config.profilesRoot)
+
+    Write-Host "Starting Sandbox profile install test for '$Name'..."
+    Write-Host "  Host session root: $sessionRoot"
+    Write-Host "  Mounted scripts:    $RepositoryRoot"
+    Write-Host "  Mounted profiles:   $profilesRoot"
+    Write-Host "  Sandbox workspace:  C:\WAPProfileSandbox\workspaces"
+
+    if ($PSCmdlet.ShouldProcess($sessionRoot, "Create Sandbox profile install session for '$Name'")) {
+        if (Test-Path -LiteralPath $sessionRoot -PathType Container) {
+            Remove-Item -LiteralPath $sessionRoot -Recurse -Force
+        }
+        foreach ($directory in @('output', 'prereqs')) {
+            New-Item -ItemType Directory -Path (Join-Path $sessionRoot $directory) -Force | Out-Null
+            Write-Host "  [created] $directory/"
+        }
+
+        Save-WapSandboxWingetPrerequisites -CaptureRoot $sessionRoot
+
+        $startupScript = New-WapProfileSandboxStartupScript -ProfileName $profile.name
+        $startupPath = Join-Path $sessionRoot 'Profile-Install-Startup.ps1'
+        $startupScript | Set-Content -LiteralPath $startupPath -Encoding utf8
+        Write-Host '  [generated] Profile-Install-Startup.ps1'
+
+        $escapedSessionRoot = [Security.SecurityElement]::Escape($sessionRoot)
+        $escapedRepositoryRoot = [Security.SecurityElement]::Escape([IO.Path]::GetFullPath($RepositoryRoot))
+        $escapedProfilesRoot = [Security.SecurityElement]::Escape($profilesRoot)
+        $wsb = @"
+<Configuration>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>$escapedSessionRoot</HostFolder>
+      <SandboxFolder>C:\WAPProfileSandbox</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>$escapedRepositoryRoot</HostFolder>
+      <SandboxFolder>C:\WAPRepo</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>$escapedProfilesRoot</HostFolder>
+      <SandboxFolder>C:\WAPProfiles</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>powershell.exe -NoProfile -NoExit -ExecutionPolicy Bypass -File C:\WAPProfileSandbox\Profile-Install-Startup.ps1</Command>
+  </LogonCommand>
+</Configuration>
+"@
+        $wsbPath = Join-Path $sessionRoot 'sandbox.wsb'
+        $wsb | Set-Content -LiteralPath $wsbPath -Encoding utf8
+        Write-Host '  [generated] sandbox.wsb'
+
+        $sandboxCommand = Get-Command WindowsSandbox.exe -ErrorAction SilentlyContinue
+        if (-not $sandboxCommand) {
+            $fallback = Join-Path $env:WINDIR 'System32\WindowsSandbox.exe'
+            if (Test-Path -LiteralPath $fallback) {
+                $sandboxCommand = [pscustomobject]@{ Source = $fallback }
+            }
+        }
+        if (-not $sandboxCommand) {
+            Write-Warning 'Windows Sandbox is unavailable. Enable the Windows Sandbox optional feature, then open sandbox.wsb manually.'
+            return
+        }
+
+        Write-Host '  [launch] Windows Sandbox'
+        $sandboxProcess = Start-Process -FilePath $sandboxCommand.Source -ArgumentList $wsbPath -PassThru
+        Write-Host 'Sandbox launched. Watch the visible Sandbox PowerShell window for live install progress.'
+        if ($sandboxProcess) {
+            Wait-WapProfileSandboxInstall -SessionRoot $sessionRoot -SandboxProcess $sandboxProcess -TimeoutSeconds $TimeoutSeconds
+        }
+        else {
+            Write-Warning "Could not get the Windows Sandbox process handle; watch the Sandbox window and log at '$sessionRoot\output\profile-install.log'."
+        }
     }
 }
 
@@ -3314,7 +3725,7 @@ function Show-WapHelp {
     @'
 WindowsAutoProfiles
 Version: 1.1
-Last updated: 2026-07-04T04:14:10Z
+Last updated: 2026-07-04T04:51:45Z
 Author: Michal Zygmunt <lahcim@fajne.com>
 Minimum PowerShell: 5.1
 
@@ -3332,7 +3743,7 @@ Usage:
   .\wap.ps1 config set logging.root <path> [-WhatIf]
   .\wap.ps1 config set sandbox.installWinget <true|false> [-WhatIf]
   .\wap.ps1 logs cleanup [-WhatIf]
-  .\wap.ps1 profile install <name> [-WhatIf]
+  .\wap.ps1 profile install <name> [--sandbox] [-WhatIf]
   .\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]
   .\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all] [-WhatIf]
   .\wap.ps1 profile new <name> [-WhatIf]
@@ -3428,7 +3839,7 @@ function Invoke-WapCli {
         [Parameter(Mandatory)][string] $RepositoryRoot
     )
 
-    $argsList = @($Arguments)
+    $argsList = if ($null -eq $Arguments) { @() } else { @($Arguments) }
     $whatIf = $argsList -contains '-WhatIf'
     $argsList = @($argsList | Where-Object { $_ -ne '-WhatIf' })
     $commandName = if ([string]::IsNullOrWhiteSpace($Command)) { 'help' } else { $Command }
@@ -3436,7 +3847,7 @@ function Invoke-WapCli {
 
     switch ($Command) {
         'init' {
-            $unknownInitArguments = @($argsList | Where-Object { $_ -ne '--skip-prereqs' })
+            $unknownInitArguments = @($argsList | Where-Object { -not [string]::IsNullOrEmpty($_) -and $_ -ne '--skip-prereqs' })
             if ($unknownInitArguments.Count -gt 0) {
                 throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 init' -UnknownToken $unknownInitArguments[0] -Completions @(
                     '.\wap.ps1 init',
@@ -3510,7 +3921,7 @@ function Invoke-WapCli {
                 '.\wap.ps1 profile list',
                 '.\wap.ps1 profile show <name>',
                 '.\wap.ps1 profile new <name>',
-                '.\wap.ps1 profile install <name>',
+                '.\wap.ps1 profile install <name> [--sandbox]',
                 '.\wap.ps1 profile activate <name>',
                 '.\wap.ps1 profile deactivate <name>',
                 '.\wap.ps1 profile uninstall <name>',
@@ -3667,7 +4078,14 @@ function Invoke-WapCli {
             }
             $name = $argsList[1]
             switch ($action) {
-                'install' { Install-WapProfile $name $RepositoryRoot -WhatIf:$whatIf }
+                'install' {
+                    if (Get-WapCliSwitch -Arguments $argsList -Name 'sandbox') {
+                        Start-WapProfileSandboxInstall -Name $name -RepositoryRoot $RepositoryRoot -WhatIf:$whatIf
+                    }
+                    else {
+                        Install-WapProfile $name $RepositoryRoot -WhatIf:$whatIf
+                    }
+                }
                 'uninstall' {
                     Uninstall-WapProfile $name $RepositoryRoot `
                         -RemoveUserData:(Get-WapCliSwitch -Arguments $argsList -Name 'remove-user-data') `
@@ -3767,6 +4185,7 @@ Export-ModuleMember -Function @(
     'Import-WapProfile',
     'Get-WapState',
     'Install-WapProfile',
+    'Start-WapProfileSandboxInstall',
     'Enable-WapProfile',
     'Disable-WapProfile',
     'Uninstall-WapProfile',
