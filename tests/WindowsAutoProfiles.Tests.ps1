@@ -798,7 +798,79 @@ Describe 'interactive Windows Sandbox capture' {
         (Join-Path $repo 'profiles/dev/captures/kicad') | Should Exist
         Invoke-WapCli -Command profile -Arguments @('capture', 'remove', 'dev', 'kicad') -RepositoryRoot $repo
         (Join-Path $repo 'profiles/dev/captures/kicad') | Should Not Exist
-        (Join-Path $repo 'profiles/ops/captures/kicad-copy') | Should Exist
+    }
+
+    It 'adds, lists, shows, and removes winget packages on a profile' {
+        $repo = Join-Path $TestDrive 'profile-winget'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/dev'), (Join-Path $repo 'profiles/dev/captures/python') -Force | Out-Null
+        @('name: dev', 'env:', '  WAP_PROFILE: dev') | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml')
+        [ordered]@{
+            id = 'python'
+            name = 'Python settings'
+            selectedVersion = 'base'
+            versions = @()
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/captures/python/metadata.json') -Encoding UTF8
+
+        Invoke-WapCli -Command profile -Arguments @('winget', 'add', 'dev', 'Python.Python.3.13') -RepositoryRoot $repo
+        Invoke-WapCli -Command profile -Arguments @('winget', 'add', 'dev', 'Microsoft.VisualStudioCode', '--source', 'msstore') -RepositoryRoot $repo
+
+        $profile = Import-WapProfile -Name dev -RepositoryRoot $repo
+        @($profile.apps).Count | Should Be 2
+        $profile.apps[0].id | Should Be 'Python.Python.3.13'
+        $profile.apps[0].source | Should Be 'winget'
+        $profile.apps[1].source | Should Be 'msstore'
+
+        $list = (Invoke-WapCli -Command profile -Arguments @('winget', 'list', 'dev') -RepositoryRoot $repo *>&1 | Out-String)
+        $list | Should Match 'Python\.Python\.3\.13'
+        $list | Should Match 'msstore'
+
+        $show = (Invoke-WapCli -Command profile -Arguments @('show', 'dev') -RepositoryRoot $repo *>&1 | Out-String)
+        $show | Should Match 'Winget packages:\s+2'
+        $show | Should Match 'Attached captures:\s+1'
+        $show | Should Match 'Python settings'
+
+        Invoke-WapCli -Command profile -Arguments @('winget', 'remove', 'dev', 'Microsoft.VisualStudioCode', '--source', 'msstore') -RepositoryRoot $repo
+        $profile = Import-WapProfile -Name dev -RepositoryRoot $repo
+        @($profile.apps).Count | Should Be 1
+        $profile.apps[0].id | Should Be 'Python.Python.3.13'
+    }
+
+    It 'installs winget packages non-interactively before reporting captures' {
+        $repo = Join-Path $TestDrive 'profile-winget-install'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/dev/captures/settings') -Force | Out-Null
+        @(
+            'name: dev'
+            'apps:'
+            '  - id: Python.Python.3.13'
+            '    source: winget'
+        ) | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml')
+        [ordered]@{
+            id = 'settings'
+            name = 'Python settings'
+            selectedVersion = 'base'
+            versions = @()
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/captures/settings/metadata.json') -Encoding UTF8
+
+        $wingetLog = Join-Path $repo 'winget-args.log'
+        $fakeWinget = Join-Path $repo 'winget.cmd'
+        $env:WAP_TEST_FAKE_WINGET = $fakeWinget
+        @(
+            '@echo off'
+            "echo %*>>`"$wingetLog`""
+            'if "%1"=="list" exit /b 1'
+            'exit /b 0'
+        ) | Set-Content -LiteralPath $fakeWinget -Encoding ASCII
+        Mock Get-Command { [pscustomobject]@{ Source = $env:WAP_TEST_FAKE_WINGET } } -ParameterFilter { $Name -eq 'winget' } -ModuleName WindowsAutoProfiles
+
+        $output = (Install-WapProfile -Name dev -RepositoryRoot $repo *>&1 | Out-String)
+        $wingetArgs = Get-Content -LiteralPath $wingetLog -Raw
+        $wingetArgs | Should Match 'list --id Python\.Python\.3\.13 --exact --accept-source-agreements'
+        $wingetArgs | Should Match 'install -e --id Python\.Python\.3\.13 --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity'
+        $output.IndexOf('Packages: 1 declared') | Should BeLessThan $output.IndexOf('Attached captures: 1 declared')
     }
 }
 

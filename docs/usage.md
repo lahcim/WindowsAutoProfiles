@@ -44,6 +44,11 @@ dispatching each command.
 .\wap.ps1 profile delete <name> [-WhatIf]
 .\wap.ps1 profile status
 .\wap.ps1 profile list
+.\wap.ps1 profile show <name>
+
+.\wap.ps1 profile winget add <profile> <packageId> [--source <source>]
+.\wap.ps1 profile winget list <profile>
+.\wap.ps1 profile winget remove <profile> <packageId> [--source <source>] [-WhatIf]
 
 .\wap.ps1 profile capture add <profile> <capture> [--id <id>] [--name <name>] [--description <text>]
 .\wap.ps1 profile capture list <profile>
@@ -355,6 +360,20 @@ shortcuts:
 
 ### Install a profile
 
+Add WinGet packages to the profile definition:
+
+```powershell
+.\wap.ps1 profile winget add developer Python.Python.3.13
+.\wap.ps1 profile winget add developer Microsoft.VisualStudioCode --source winget
+.\wap.ps1 profile winget list developer
+.\wap.ps1 profile show developer
+```
+
+`--source` defaults to `winget`. During install, WAP runs WinGet with exact
+package IDs, the configured source, `--accept-package-agreements`, and
+`--accept-source-agreements` so source/package prompts are answered
+automatically.
+
 ```powershell
 .\wap.ps1 profile install developer
 ```
@@ -373,12 +392,14 @@ Installing profile 'developer'...
     [create] C:\Workspaces\developer\Downloads
     [create] C:\Workspaces\developer\Cache
   Packages: 3 declared
-    [check] Git.Git
+    [check] Git.Git (source: winget)
     [installed] Git.Git
-    [check] Microsoft.VisualStudioCode
+    [check] Microsoft.VisualStudioCode (source: winget)
     [ready] Microsoft.VisualStudioCode is already installed
-    [check] Microsoft.PowerShell
+    [check] Microsoft.PowerShell (source: winget)
     [installed] Microsoft.PowerShell
+  Attached captures: 1 declared
+    [capture] developer-settings selected=base replay=base only
   Shortcuts: 1 declared
     [create] Developer Tools
   State saved.
@@ -387,6 +408,8 @@ Done: profile 'developer' installed.
 
 Install creates directories, installs packages, creates shortcuts, and records
 ownership in `.wap-state.json`. It does not activate user environment variables.
+WinGet packages are installed before attached captures are processed so captured
+files and registry values can override installer defaults.
 
 Preview first:
 

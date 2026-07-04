@@ -202,7 +202,10 @@ sharedRoot  = <workspaceRoot>\_Shared
 `profile install` prepares the profile:
 
 - creates the profile and shared workspace directories
-- installs declared WinGet packages
+- installs declared WinGet packages first, accepting package/source agreements
+  for non-interactive setup
+- applies/records attached captures after WinGet packages, so captures can
+  override files or registry values created by package installers
 - creates declared shortcuts
 - records ownership in `.wap-state.json`
 
@@ -225,6 +228,10 @@ activation. It does not uninstall packages, delete folders, or remove shortcuts.
 
 .\wap.ps1 profile status
 .\wap.ps1 profile new developer
+.\wap.ps1 profile winget add developer Python.Python.3.13
+.\wap.ps1 profile winget add developer Microsoft.VisualStudioCode --source winget
+.\wap.ps1 profile winget list developer
+.\wap.ps1 profile show developer
 .\wap.ps1 profile install developer -WhatIf
 .\wap.ps1 profile install developer
 .\wap.ps1 profile activate developer
@@ -239,6 +246,7 @@ activation. It does not uninstall packages, delete folders, or remove shortcuts.
 .\wap.ps1 capture validate electronics-kicad
 .\wap.ps1 profile capture add developer electronics-kicad --id kicad --name "KiCad"
 .\wap.ps1 profile capture list developer
+.\wap.ps1 profile winget remove developer Python.Python.3.13
 .\wap.ps1 capture remove electronics-kicad
 ```
 
