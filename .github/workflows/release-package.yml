@@ -30,11 +30,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Install Pester
+      - name: Ensure Pester 3 is available
         shell: powershell
         run: |
-          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module Pester -RequiredVersion 3.4.0 -Scope CurrentUser -Force
+          $ErrorActionPreference = 'Stop'
+          $pester = Get-Module -ListAvailable Pester |
+            Where-Object { $_.Version -eq [version]'3.4.0' } |
+            Select-Object -First 1
+
+          if (-not $pester) {
+            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
+            Install-Module Pester -RequiredVersion 3.4.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          }
 
       - name: Run regression tests
         shell: powershell
