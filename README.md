@@ -7,7 +7,7 @@ configuration discovered in Windows Sandbox.
 
 Version: 1.1
 
-Last updated: 2026-07-04T05:18:20Z
+Last updated: 2026-07-04T06:48:40Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -173,6 +173,43 @@ Install and activate it:
 
 Open a new terminal for all user-level environment changes to be visible to new
 processes.
+
+## Example profiles
+
+This repository includes ready-to-try profiles under `profiles\`:
+
+| Profile | Purpose | Main packages |
+|---|---|---|
+| `developer` | General software development and AI-assisted coding tools | Git, Go, Node.js LTS, Chocolatey, Python 3.13, GitHub CLI, GitHub Copilot, OpenAI Codex, Claude Code; Cursor is present but disabled |
+| `electronics` | Electronics, embedded, and PCB design work | Arduino IDE and KiCad |
+
+Review a profile before installing it:
+
+```powershell
+notepad .\profiles\developer\profile.yaml
+notepad .\profiles\electronics\profile.yaml
+```
+
+Preview, install, and activate one of the examples:
+
+```powershell
+.\wap.ps1 profile install developer -WhatIf
+.\wap.ps1 profile install developer
+.\wap.ps1 profile activate developer
+```
+
+Replace `developer` with `electronics` to install the electronics profile:
+
+```powershell
+.\wap.ps1 profile install electronics -WhatIf
+.\wap.ps1 profile install electronics
+.\wap.ps1 profile activate electronics
+```
+
+Profile-specific notes are included in:
+
+- `profiles\developer\README.md`
+- `profiles\electronics\README.md`
 
 ## Core concepts
 
