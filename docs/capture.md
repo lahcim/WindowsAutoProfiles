@@ -6,7 +6,7 @@ delete anything, or generate MSIX packages.
 
 Version: 1.1
 
-Last updated: 2026-07-04T06:56:18Z
+Last updated: 2026-07-04T08:17:28Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -190,7 +190,7 @@ Delete a leftover capture session when you are ready to start over with the
 same name, or after it has been attached to the profiles that need it:
 
 ```powershell
-.\wap.ps1 capture remove example
+.\wap.ps1 capture remove example --Confirm
 ```
 
 ## Safety

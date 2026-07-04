@@ -4,7 +4,7 @@ This guide shows common WindowsAutoProfiles workflows end to end.
 
 Version: 1.1
 
-Last updated: 2026-07-04T07:15:58Z
+Last updated: 2026-07-04T08:17:28Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -196,7 +196,7 @@ List attached captures:
 Clean up the raw standalone capture when you no longer need it:
 
 ```powershell
-.\wap.ps1 capture remove kicad
+.\wap.ps1 capture remove kicad --Confirm
 ```
 
 ## Scenario 5: Rename a capture before attaching it
@@ -313,7 +313,7 @@ bad-run    BaselineFailed 2026-07-04T02:11:22Z C:\src\WindowsAutoProfiles\.captu
 Remove the failed run:
 
 ```powershell
-.\wap.ps1 capture remove bad-run
+.\wap.ps1 capture remove bad-run --Confirm
 ```
 
 If filter rules changed after a successful capture, reapply them:

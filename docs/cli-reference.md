@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T07:55:03Z
+Last updated: 2026-07-04T08:17:28Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -69,7 +69,7 @@ https://github.com/<owner>/<repo>/tree/<branch>/<path-to-profile-folder>
 | `.\wap.ps1 profile list` | Alias for `profile status`. |
 | `.\wap.ps1 profile show <name>` | Show one profile's definition path, roots, WinGet packages, attached captures, and unreferenced capture folders. |
 | `.\wap.ps1 profile new <name> [-WhatIf]` | Create a starter `<profilesRoot>\<name>\profile.yaml`. |
-| `.\wap.ps1 profile download <name> <github-profile-url> [-WhatIf]` | Download a GitHub profile folder into the configured `profilesRoot` using the supplied local profile name. |
+| `.\wap.ps1 profile download <name> <github-profile-url> [--force] [-WhatIf]` | Download a GitHub profile folder into the configured `profilesRoot` using the supplied local profile name. Use `--force` to replace an existing local definition. |
 | `.\wap.ps1 profile install <name> [-WhatIf]` | Create directories, install enabled profile and capture-owned WinGet packages, create shortcuts, and save install state. |
 | `.\wap.ps1 profile install <name> --sandbox [-WhatIf]` | Launch a disposable Windows Sandbox profile-install test and leave it open for manual lifecycle testing. |
 | `.\wap.ps1 profile activate <name> [-WhatIf]` | Apply the profile's user environment variables and PATH fragments. |
@@ -77,6 +77,7 @@ https://github.com/<owner>/<repo>/tree/<branch>/<path-to-profile-folder>
 | `.\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]` | Deactivate if needed, remove WAP-owned shortcuts/package ownership, and optionally delete profile data or eligible capture-added registry keys. |
 | `.\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all] [-WhatIf]` | Cleanup user data or eligible capture-added registry keys after install/uninstall. |
 | `.\wap.ps1 profile delete <name> [-WhatIf]` | Delete an uninstalled profile definition directory. Workspace data and `.capture` sessions are preserved. |
+| `.\wap.ps1 profile remove <name> --Confirm [-WhatIf]` | Alias for deleting an uninstalled profile definition directory, with an explicit confirmation token required. |
 
 ## Profile WinGet commands
 
@@ -104,7 +105,7 @@ process with `WAP_WINGET_INSTALL_TIMEOUT_SECONDS`.
 | `.\wap.ps1 capture validate <name>` | Validate dry-run safety flags and capture-local package references, then show a diff summary. |
 | `.\wap.ps1 capture diff <name>` | Show the finalized capture summary. |
 | `.\wap.ps1 capture applyfilter <name>` | Reapply current filter rules to an existing finalized manifest. |
-| `.\wap.ps1 capture remove <name> [-WhatIf]` | Delete a standalone `.capture\<name>\` session. Profile definitions and state are not touched. |
+| `.\wap.ps1 capture remove <name> --Confirm [-WhatIf]` | Delete a standalone `.capture\<name>\` session. Profile definitions and state are not touched. |
 
 `capture start` bootstraps WinGet inside Sandbox by default before baseline
 capture. Use `--no-winget` for a single session, or set

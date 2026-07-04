@@ -674,7 +674,7 @@ function Get-WapConfig {
 
     $paths = Get-WapConfigPaths -RepositoryRoot $RepositoryRoot
     if ($paths.mode -eq 'missing') {
-        throw "Configuration was not found at '$($paths.bootstrapPath)'. Run '.\wap.ps1 init'."
+        throw "Configuration was not found at '$($paths.bootstrapPath)'. Run 'wap init' (or '.\wap.ps1 init' from the install/repository folder)."
     }
     if ($paths.mode -eq 'missingBootstrap') {
         throw "Bootstrap configuration was not found at '$($paths.bootstrapPath)'. Run '.\wap.ps1 config set bootstrapConfigPath <path>' or update '$($paths.localBootstrapPath)'."
@@ -1442,17 +1442,39 @@ function Save-WapRemoteProfile {
     param(
         [Parameter(Mandatory)][string] $Name,
         [Parameter(Mandatory)][string] $Url,
-        [Parameter(Mandatory)][string] $RepositoryRoot
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [switch] $Force
     )
 
     $reference = ConvertFrom-WapGitHubProfileUrl -Url $Url
+    $configPath = Join-Path $RepositoryRoot 'wap.config.json'
+    $statePath = Join-Path $RepositoryRoot '.wap-state.json'
+    $configMissing = -not (Test-Path -LiteralPath $configPath -PathType Leaf)
+    $stateMissing = -not (Test-Path -LiteralPath $statePath -PathType Leaf)
+    $needsInitialization = $configMissing -or $stateMissing
+    if ($needsInitialization) {
+        if ($WhatIfPreference) {
+            Write-Host 'Would initialize WindowsAutoProfiles if needed.'
+            if ($configMissing) {
+                $profilesRoot = Join-Path $RepositoryRoot 'profiles'
+                Write-Host "Would download profile '$Name' from $($reference.displayUrl)."
+                Write-Host "Would save profile definition to '$(Join-Path $profilesRoot $Name)'."
+                return
+            }
+        }
+        else {
+            Write-Host 'Initializing WindowsAutoProfiles before remote profile download...'
+            Initialize-Wap -RepositoryRoot $RepositoryRoot -SkipPrereqs
+        }
+    }
+
     $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
     if ($WhatIfPreference) {
         Write-Host "Would download profile '$Name' from $($reference.displayUrl)."
         Write-Host "Would save profile definition to '$(Join-Path $config.profilesRoot $Name)'."
         return
     }
-    $targetRoot = Save-WapGitHubProfileDefinition -Reference $reference -ProfilesRoot $config.profilesRoot -TargetName $Name -WhatIf:$WhatIfPreference
+    $targetRoot = Save-WapGitHubProfileDefinition -Reference $reference -ProfilesRoot $config.profilesRoot -TargetName $Name -Force:$Force -WhatIf:$WhatIfPreference
     Write-Host "Remote profile downloaded to '$targetRoot'."
     Write-Host 'Install it with:'
     Write-Host "  .\wap.ps1 profile install $Name"
@@ -4670,13 +4692,14 @@ Usage:
   .\wap.ps1 config set sandbox.installWinget <true|false> [-WhatIf]
   .\wap.ps1 logs cleanup [-WhatIf]
   .\wap.ps1 profile install <name> [--sandbox] [-WhatIf]
-  .\wap.ps1 profile download <name> <github-profile-url> [-WhatIf]
+  .\wap.ps1 profile download <name> <github-profile-url> [--force] [-WhatIf]
   .\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]
   .\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all] [-WhatIf]
   .\wap.ps1 profile new <name> [-WhatIf]
   .\wap.ps1 profile activate <name> [-WhatIf]
   .\wap.ps1 profile deactivate <name> [-WhatIf]
   .\wap.ps1 profile delete <name> [-WhatIf]
+  .\wap.ps1 profile remove <name> --Confirm [-WhatIf]
   .\wap.ps1 profile status
   .\wap.ps1 profile list
   .\wap.ps1 profile show <name>
@@ -4704,7 +4727,7 @@ Usage:
   .\wap.ps1 capture validate <name>
   .\wap.ps1 capture diff <name>
   .\wap.ps1 capture applyfilter <name>
-  .\wap.ps1 capture remove <name> [-WhatIf]
+  .\wap.ps1 capture remove <name> --Confirm [-WhatIf]
 
 Global options:
   --examples  Show step-by-step populated examples from docs\examples.md.
@@ -4865,13 +4888,14 @@ function Invoke-WapCli {
                 '.\wap.ps1 profile list',
                 '.\wap.ps1 profile show <name>',
                 '.\wap.ps1 profile new <name>',
-                '.\wap.ps1 profile download <name> <github-profile-url>',
+                '.\wap.ps1 profile download <name> <github-profile-url> [--force]',
                 '.\wap.ps1 profile install <name> [--sandbox]',
                 '.\wap.ps1 profile activate <name>',
                 '.\wap.ps1 profile deactivate <name>',
                 '.\wap.ps1 profile uninstall <name>',
                 '.\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all]',
                 '.\wap.ps1 profile delete <name>',
+                '.\wap.ps1 profile remove <name> --Confirm',
                 '.\wap.ps1 profile winget <add|list|remove> ...',
                 '.\wap.ps1 profile capture <add|list|enable|disable|remove|copy|edit|refresh|versions|select-version|merge> ...'
             )
@@ -4880,10 +4904,11 @@ function Invoke-WapCli {
             }
             $action = $argsList[0]
             if ($action -eq 'download') {
-                if ($argsList.Count -ne 3) {
-                    throw 'Usage: .\wap.ps1 profile download <name> <github-profile-url> [-WhatIf]'
+                $downloadArgs = @($argsList | Where-Object { $_ -ne '--force' })
+                if ($downloadArgs.Count -ne 3) {
+                    throw 'Usage: .\wap.ps1 profile download <name> <github-profile-url> [--force] [-WhatIf]'
                 }
-                Save-WapRemoteProfile -Name $argsList[1] -Url $argsList[2] -RepositoryRoot $RepositoryRoot -WhatIf:$whatIf
+                Save-WapRemoteProfile -Name $downloadArgs[1] -Url $downloadArgs[2] -RepositoryRoot $RepositoryRoot -Force:(Get-WapCliSwitch -Arguments $argsList -Name 'force') -WhatIf:$whatIf
                 return
             }
             if ($action -eq 'winget') {
@@ -5089,6 +5114,12 @@ function Invoke-WapCli {
                 'activate' { Enable-WapProfile $name $RepositoryRoot -WhatIf:$whatIf }
                 'deactivate' { Disable-WapProfile $name $RepositoryRoot -WhatIf:$whatIf }
                 'delete' { Remove-WapProfileDefinition $name $RepositoryRoot -WhatIf:$whatIf }
+                'remove' {
+                    if (-not (Get-WapCliSwitch -Arguments $argsList -Name 'Confirm')) {
+                        throw 'Usage: .\wap.ps1 profile remove <name> --Confirm [-WhatIf]'
+                    }
+                    Remove-WapProfileDefinition $name $RepositoryRoot -WhatIf:$whatIf
+                }
                 default {
                     throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 profile' -UnknownToken ([string]$action) -Completions $profileCompletions)
                 }
@@ -5104,7 +5135,7 @@ function Invoke-WapCli {
                 '.\wap.ps1 capture validate <name>',
                 '.\wap.ps1 capture diff <name>',
                 '.\wap.ps1 capture applyfilter <name>',
-                '.\wap.ps1 capture remove <name> [-WhatIf]'
+                '.\wap.ps1 capture remove <name> --Confirm [-WhatIf]'
             )
             if (Test-WapCliMissingToken -Arguments $argsList) {
                 throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 capture' -Completions $captureCompletions)
@@ -5142,7 +5173,10 @@ function Invoke-WapCli {
                     Invoke-WapCaptureFilterApplication $argsList[1] $RepositoryRoot
                 }
                 'remove' {
-                    if ($argsList.Count -ne 2) { throw 'Usage: .\wap.ps1 capture remove <name> [-WhatIf]' }
+                    $captureRemoveArgs = @($argsList | Where-Object { $_ -ne '--Confirm' })
+                    if ($captureRemoveArgs.Count -ne 2 -or -not (Get-WapCliSwitch -Arguments $argsList -Name 'Confirm')) {
+                        throw 'Usage: .\wap.ps1 capture remove <name> --Confirm [-WhatIf]'
+                    }
                     Remove-WapCaptureSession $argsList[1] $RepositoryRoot -WhatIf:$whatIf
                 }
                 default {

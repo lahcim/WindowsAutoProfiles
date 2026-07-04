@@ -7,7 +7,7 @@ configuration discovered in Windows Sandbox.
 
 Version: 1.1
 
-Last updated: 2026-07-04T07:55:03Z
+Last updated: 2026-07-04T08:17:28Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -39,6 +39,7 @@ temporary files. It does **not** save the profile definition locally.
 
 This downloads the profile into your configured `profilesRoot` as
 `electronics`, so you can review or edit it before installing it by local name.
+Use `--force` to replace an existing downloaded profile definition.
 
 Use GitHub folder URLs in this format:
 
@@ -406,7 +407,7 @@ Run `.\wap.ps1 --help` for the authoritative command list. Current commands:
 .\wap.ps1 capture validate electronics-kicad
 .\wap.ps1 capture diff electronics-kicad
 .\wap.ps1 capture applyfilter electronics-kicad
-.\wap.ps1 capture remove electronics-kicad
+.\wap.ps1 capture remove electronics-kicad --Confirm
 
 .\wap.ps1 profile capture add developer electronics-kicad --id kicad --name "KiCad"
 .\wap.ps1 profile capture list developer
@@ -479,7 +480,7 @@ Standalone captures live under `.capture\<name>\`. They are ignored by Git and
 can be removed after they are no longer needed:
 
 ```powershell
-.\wap.ps1 capture remove kicad
+.\wap.ps1 capture remove kicad --Confirm
 ```
 
 ## Documentation

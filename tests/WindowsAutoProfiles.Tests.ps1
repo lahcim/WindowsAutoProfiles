@@ -257,7 +257,6 @@ Describe 'state, init, and capture' {
     It 'downloads a remote profile definition to the configured profiles root' {
         $repo = Join-Path $TestDrive 'profile-download'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         $global:downloadReference = $null
         $global:downloadProfilesRoot = $null
         $global:downloadTargetName = $null
@@ -277,6 +276,8 @@ Describe 'state, init, and capture' {
 
         Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics') -RepositoryRoot $repo
 
+        (Join-Path $repo 'wap.config.json') | Should Exist
+        (Join-Path $repo '.wap-state.json') | Should Exist
         $global:downloadReference.name | Should Be 'electronics'
         $global:downloadProfilesRoot | Should Be (Join-Path $repo 'profiles')
         $global:downloadTargetName | Should Be 'bench'
@@ -285,14 +286,34 @@ Describe 'state, init, and capture' {
         Remove-Variable -Name downloadTargetName -Scope Global -ErrorAction SilentlyContinue
     }
 
+    It 'force downloads over an existing remote profile definition' {
+        $repo = Join-Path $TestDrive 'profile-download-force'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles\bench') -Force | Out-Null
+        @('name: bench', 'apps:') | Set-Content -LiteralPath (Join-Path $repo 'profiles\bench\profile.yaml')
+        $global:downloadForce = $false
+        Mock Save-WapGitHubProfileDefinition {
+            param($Reference, [string] $ProfilesRoot, [string] $TargetName, [switch] $Force)
+            $global:downloadForce = [bool]$Force
+            return (Join-Path $ProfilesRoot $TargetName)
+        } -ModuleName WindowsAutoProfiles
+
+        Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics', '--force') -RepositoryRoot $repo
+
+        $global:downloadForce | Should Be $true
+        Remove-Variable -Name downloadForce -Scope Global -ErrorAction SilentlyContinue
+    }
+
     It 'previews remote profile download without downloading' {
         $repo = Join-Path $TestDrive 'profile-download-whatif'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         Mock Save-WapGitHubProfileDefinition { throw 'download should not run during WhatIf' } -ModuleName WindowsAutoProfiles
 
         $output = (Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics', '-WhatIf') -RepositoryRoot $repo *>&1 | Out-String)
 
+        (Join-Path $repo 'wap.config.json') | Should Not Exist
+        $output | Should Match 'Would initialize WindowsAutoProfiles'
         $output | Should Match "Would download profile 'bench'"
         $output | Should Match ([regex]::Escape((Join-Path $repo 'profiles\bench')))
     }
@@ -788,9 +809,9 @@ Describe 'interactive Windows Sandbox capture' {
         'other' | Set-Content -LiteralPath (Join-Path $otherCaptureRoot 'session.json')
         @('name: demo', 'apps:') | Set-Content -LiteralPath (Join-Path $profileRoot 'profile.yaml')
 
-        Invoke-WapCli -Command capture -Arguments @('remove', 'demo', '-WhatIf') -RepositoryRoot $repo
+        Invoke-WapCli -Command capture -Arguments @('remove', 'demo', '--Confirm', '-WhatIf') -RepositoryRoot $repo
         $captureRoot | Should Exist
-        Invoke-WapCli -Command capture -Arguments @('remove', 'demo') -RepositoryRoot $repo
+        Invoke-WapCli -Command capture -Arguments @('remove', 'demo', '--Confirm') -RepositoryRoot $repo
         $captureRoot | Should Not Exist
         $otherCaptureRoot | Should Exist
         $profileRoot | Should Exist
@@ -1399,6 +1420,40 @@ Describe 'profile deletion' {
         catch { $message = $_.Exception.Message }
         $message | Should Match 'Uninstall it before deleting'
         $profilePath | Should Exist
+    }
+
+    It 'requires Confirm for profile remove alias' {
+        $repo = Join-Path $TestDrive 'remove-profile-confirm'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        $profilePath = Join-Path $repo 'profiles/disposable'
+        New-Item -ItemType Directory -Path $profilePath | Out-Null
+        @('name: disposable', 'apps:') | Set-Content -LiteralPath (Join-Path $profilePath 'profile.yaml')
+
+        $message = $null
+        try { Invoke-WapCli -Command profile -Arguments @('remove', 'disposable') -RepositoryRoot $repo }
+        catch { $message = $_.Exception.Message }
+        $message | Should Match '--Confirm'
+        $profilePath | Should Exist
+
+        Invoke-WapCli -Command profile -Arguments @('remove', 'disposable', '--Confirm') -RepositoryRoot $repo
+        $profilePath | Should Not Exist
+    }
+}
+Describe 'capture deletion' {
+    It 'requires Confirm for standalone capture remove' {
+        $repo = Join-Path $TestDrive 'remove-capture-confirm'
+        $capturePath = Join-Path $repo '.capture\demo'
+        New-Item -ItemType Directory -Path $capturePath -Force | Out-Null
+
+        $message = $null
+        try { Invoke-WapCli -Command capture -Arguments @('remove', 'demo') -RepositoryRoot $repo }
+        catch { $message = $_.Exception.Message }
+        $message | Should Match '--Confirm'
+        $capturePath | Should Exist
+
+        Invoke-WapCli -Command capture -Arguments @('remove', 'demo', '--Confirm') -RepositoryRoot $repo
+        $capturePath | Should Not Exist
     }
 }
 Describe 'profile uninstall' {

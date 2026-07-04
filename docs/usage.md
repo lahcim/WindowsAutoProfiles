@@ -5,7 +5,7 @@ and expected command output.
 
 Version: 1.1
 
-Last updated: 2026-07-04T07:55:03Z
+Last updated: 2026-07-04T08:17:28Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -53,10 +53,11 @@ dispatching each command.
 .\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]
 .\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all] [-WhatIf]
 .\wap.ps1 profile new <name> [-WhatIf]
-.\wap.ps1 profile download <name> <github-profile-url> [-WhatIf]
+.\wap.ps1 profile download <name> <github-profile-url> [--force] [-WhatIf]
 .\wap.ps1 profile activate <name> [-WhatIf]
 .\wap.ps1 profile deactivate <name> [-WhatIf]
 .\wap.ps1 profile delete <name> [-WhatIf]
+.\wap.ps1 profile remove <name> --Confirm [-WhatIf]
 .\wap.ps1 profile status
 .\wap.ps1 profile list
 .\wap.ps1 profile show <name>
@@ -86,7 +87,7 @@ dispatching each command.
 .\wap.ps1 capture validate <name>
 .\wap.ps1 capture diff <name>
 .\wap.ps1 capture applyfilter <name>
-.\wap.ps1 capture remove <name> [-WhatIf]
+.\wap.ps1 capture remove <name> --Confirm [-WhatIf]
 ```
 
 All commands accept the global `--no-log` option to skip log generation for
@@ -126,7 +127,8 @@ It does not save the profile definition locally.
 
 This copies the remote profile folder under the configured `profilesRoot` using
 the local name `electronics`, and rewrites `profile.yaml` to match that local
-profile name.
+profile name. Add `--force` to overwrite an existing downloaded profile
+definition with the same local name.
 
 Use GitHub folder URLs in this format:
 
@@ -807,7 +809,7 @@ backup named `capture-manifest.before-applyfilter.json`.
 ### Remove a capture
 
 ```powershell
-.\wap.ps1 capture remove electronics-kicad
+.\wap.ps1 capture remove electronics-kicad --Confirm
 ```
 
 Example output:
