@@ -1042,6 +1042,51 @@ Describe 'interactive Windows Sandbox capture' {
         $output.IndexOf('Packages: 2 declared') | Should BeLessThan $output.IndexOf('Attached captures: 1 declared')
     }
 
+    It 'normalizes legacy corrupted string arrays in install state' {
+        $repo = Join-Path $TestDrive 'profile-corrupted-state'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/dev') -Force | Out-Null
+        @(
+            'name: dev'
+            'apps:'
+            '  - id: GitHub.cli'
+            '    source: winget'
+            '    enabled: true'
+        ) | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml')
+        [ordered]@{
+            version = 1
+            activeProfile = $null
+            profiles = [ordered]@{
+                dev = [ordered]@{
+                    installed = $true
+                    installedPackages = @([ordered]@{ Length = 30 })
+                    createdDirectories = @([ordered]@{ Length = 40 })
+                    shortcuts = @()
+                }
+            }
+            registry = [ordered]@{ enabled = $false }
+        } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $repo '.wap-state.json') -Encoding UTF8
+
+        $wingetLog = Join-Path $repo 'winget-args.log'
+        $fakeWinget = Join-Path $repo 'winget.cmd'
+        $env:WAP_TEST_FAKE_WINGET = $fakeWinget
+        @(
+            '@echo off'
+            "echo %*>>`"$wingetLog`""
+            'if "%1"=="list" exit /b 1'
+            'exit /b 0'
+        ) | Set-Content -LiteralPath $fakeWinget -Encoding ASCII
+        Mock Get-Command { [pscustomobject]@{ Source = $env:WAP_TEST_FAKE_WINGET } } -ParameterFilter { $Name -eq 'winget' } -ModuleName WindowsAutoProfiles
+
+        Install-WapProfile -Name dev -RepositoryRoot $repo
+        $stateRaw = Get-Content -LiteralPath (Join-Path $repo '.wap-state.json') -Raw
+        $state = $stateRaw | ConvertFrom-Json
+
+        $state.profiles.dev.installedPackages[0] | Should Be 'GitHub.cli'
+        $stateRaw | Should Not Match '"Length"\s*:'
+    }
+
     It 'installs winget packages owned by enabled captures without adding them to profile apps' {
         $repo = Join-Path $TestDrive 'profile-capture-winget-install'
         New-Item -ItemType Directory -Path $repo -Force | Out-Null

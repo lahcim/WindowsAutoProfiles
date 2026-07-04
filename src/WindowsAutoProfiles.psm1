@@ -59,6 +59,7 @@ function ConvertTo-WapOrderedHashtable {
     param([AllowNull()] $Value)
 
     if ($null -eq $Value) { return $null }
+    if ($Value -is [string] -or $Value -is [ValueType]) { return $Value }
     if ($Value -is [System.Collections.IDictionary]) {
         $result = [ordered]@{}
         foreach ($key in $Value.Keys) {
@@ -1199,6 +1200,17 @@ function Get-WapProfileState {
     return $null
 }
 
+function ConvertTo-WapStateStringArray {
+    param([AllowNull()] $Value)
+
+    if ($null -eq $Value) { return @() }
+    return @(
+        @($Value) |
+            Where-Object { $_ -is [string] -and -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { [string]$_ }
+    )
+}
+
 function Set-WapUserEnvironment {
     param([string] $Name, [AllowNull()][string] $Value)
     [Environment]::SetEnvironmentVariable($Name, $Value, 'User')
@@ -1475,9 +1487,9 @@ function Install-WapProfile {
     $profile = Import-WapProfile -Name $Name -RepositoryRoot $RepositoryRoot
     $state = Get-WapState $RepositoryRoot
     $existing = Get-WapProfileState $state $Name
-    $installedPackages = if ($existing) { @($existing.installedPackages) } else { @() }
-    $createdDirectories = if ($existing) { @($existing.createdDirectories) } else { @() }
-    $createdShortcuts = if ($existing) { @($existing.shortcuts) } else { @() }
+    $installedPackages = if ($existing) { @(ConvertTo-WapStateStringArray $existing.installedPackages) } else { @() }
+    $createdDirectories = if ($existing) { @(ConvertTo-WapStateStringArray $existing.createdDirectories) } else { @() }
+    $createdShortcuts = if ($existing) { @(ConvertTo-WapStateStringArray $existing.shortcuts) } else { @() }
 
     Write-Host "Installing profile '$Name'..."
     Write-Host "  Profile root: $($profile.profileRoot)"
@@ -1598,6 +1610,15 @@ function Install-WapProfile {
     }
 
     if (-not $WhatIfPreference) {
+        $existingActivation = $null
+        if ($existing) {
+            if ($existing -is [System.Collections.IDictionary] -and $existing.Contains('activation')) {
+                $existingActivation = $existing['activation']
+            }
+            elseif ($existing.PSObject.Properties['activation']) {
+                $existingActivation = $existing.activation
+            }
+        }
         $state.profiles[$Name] = [ordered]@{
             installed = $true
             workspaceRoot = $profile.workspaceRoot
@@ -1609,7 +1630,7 @@ function Install-WapProfile {
             installedPackages = @($installedPackages)
             shortcuts = @($createdShortcuts)
             captures = @($enabledCapturePlan)
-            activation = if ($existing) { $existing.activation } else { $null }
+            activation = $existingActivation
             installedAt = (Get-Date).ToUniversalTime().ToString('o')
         }
         Save-WapState $state $RepositoryRoot
