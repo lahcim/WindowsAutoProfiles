@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T02:24:12Z
+Last updated: 2026-07-04T03:24:14Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -11,7 +11,8 @@ actionable GitHub issues when something goes wrong.
 
 ## Command logs
 
-By default every `wap.ps1` invocation creates a detailed timestamped log under:
+By default every `wap.ps1` invocation creates a detailed timestamped log under
+`logging.root`, which defaults to:
 
 ```text
 .logs\
@@ -51,7 +52,7 @@ Logs include:
 
 When reporting a bug, attach:
 
-1. The generated `.logs\*.log` file printed by the failed command.
+1. The generated `*.log` file printed by the failed command.
 2. The exact command you ran.
 3. The relevant `profile.yaml`, if the issue is profile-specific.
 4. The relevant `metadata.json` and `capture-manifest.json`, if the issue is capture-specific.
@@ -119,8 +120,9 @@ Sandbox capture has its own logs inside the capture workspace:
 .capture\<name>\baseline\baseline-status.json
 ```
 
-Host command logs are still written under `.logs\` when you run commands such
-as:
+Host command logs are still written under the resolved logging root (`.logs\`
+by default, or the custom `logging.root` directory if you configured one) when
+you run commands such as:
 
 ```powershell
 .\wap.ps1 capture start kicad
@@ -128,5 +130,5 @@ as:
 .\wap.ps1 capture applyfilter kicad
 ```
 
-For capture failures, include both the host `.logs\*.log` file and the relevant
+For capture failures, include both the host command log file and the relevant
 `.capture\<name>\output\*.txt` or `.log` files.

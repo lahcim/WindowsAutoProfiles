@@ -5,7 +5,7 @@ workspaces from versioned YAML profiles.
 
 Version: 1.1
 
-Last updated: 2026-07-04T02:24:12Z
+Last updated: 2026-07-04T03:24:14Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -59,27 +59,56 @@ Clone the repository and initialize the local configuration:
 git clone https://github.com/<owner>/WindowsAutoProfiles.git
 Set-Location .\WindowsAutoProfiles
 .\wap.ps1 init
+.\wap.ps1 --examples
 ```
 
 Configure where profile workspaces should be created:
 
 ```powershell
-.\wap.ps1 config set workspaceRoot C:\Workspaces
+.\wap.ps1 config set workspaceRoot '%USERPROFILE%\Workspaces'
 .\wap.ps1 config show
 ```
 
 Example output:
 
 ```text
-Config path: C:\src\WindowsAutoProfiles\wap.config.json
-workspaceRoot: C:\Workspaces
+Configurable settings (use ".\wap.ps1 config set <key> <value>" on these keys only):
+
+version               : 1
+bootstrapConfigPath   : <local wap.config.json>
+configPath            : wap.settings.json
+workspaceRoot         : %USERPROFILE%\Workspaces
+profilesRoot          : profiles
+logging.enabled       : True
+logging.retentionDays : 30
+logging.root          : .logs
+
+Dynamic resolved settings (read-only; computed at runtime from the configurable settings above):
+
+local.bootstrapConfigPath    : C:\src\WindowsAutoProfiles\wap.config.json
+resolved.bootstrapConfigPath : C:\src\WindowsAutoProfiles\wap.config.json
+resolved.configPath          : C:\src\WindowsAutoProfiles\wap.settings.json
+resolved.workspaceRoot       : C:\Users\me\Workspaces
+resolved.profilesRoot        : C:\src\WindowsAutoProfiles\profiles
+resolved.logging.root        : C:\src\WindowsAutoProfiles\.logs
 ```
 
-Create a profile by copying the example:
+Optionally store full settings and profile definitions in OneDrive:
 
 ```powershell
-Copy-Item .\profiles\example .\profiles\developer -Recurse
-notepad .\profiles\developer\profile.yaml
+.\wap.ps1 config set configPath '%OneDrive%\WindowsAutoProfiles\wap.settings.json'
+.\wap.ps1 config set profilesRoot '%OneDrive%\WindowsAutoProfiles\profiles'
+.\wap.ps1 config set logging.root '%LOCALAPPDATA%\WindowsAutoProfiles\Logs'
+```
+
+Changing `logging.root` affects the next command execution. `config set` warns
+if the directory does not exist; WAP creates it when command logging starts.
+
+Create an empty placeholder profile under the configured `profilesRoot`:
+
+```powershell
+.\wap.ps1 profile new developer
+notepad <profilesRoot>\developer\profile.yaml
 ```
 
 Update the profile name and package list:
@@ -126,23 +155,34 @@ processes.
 
 ### Profile
 
-A profile is a directory under `profiles\<name>\` containing `profile.yaml`.
-It describes packages, workspace folders, environment variables, PATH entries,
-and shortcuts for one workspace.
+A profile is a directory under `<profilesRoot>\<name>\` containing
+`profile.yaml`. It describes packages, workspace folders, environment
+variables, PATH entries, and shortcuts for one workspace.
 
-### Workspace root
+### Configuration roots
 
-`wap.config.json` defines the local machine's workspace root. This file is
-machine-specific and can use environment variables:
+`wap.config.json` is a small bootstrap file that points to the full settings
+file:
 
 ```json
 {
   "version": 1,
-  "workspaceRoot": "%USERPROFILE%\\Workspaces"
+  "configPath": "wap.settings.json"
 }
 ```
 
-For a profile named `developer`, WAP derives:
+The full settings file controls workspace and profile-definition roots:
+
+```json
+{
+  "version": 1,
+  "workspaceRoot": "%USERPROFILE%\\Workspaces",
+  "profilesRoot": "%OneDrive%\\WindowsAutoProfiles\\profiles"
+}
+```
+
+Environment-variable tokens are stored literally in JSON and expanded at
+runtime. For a profile named `developer`, WAP derives:
 
 ```text
 profileRoot = <workspaceRoot>\developer
@@ -176,6 +216,7 @@ activation. It does not uninstall packages, delete folders, or remove shortcuts.
 .\wap.ps1 config set workspaceRoot C:\Workspaces
 
 .\wap.ps1 profile status
+.\wap.ps1 profile new developer
 .\wap.ps1 profile install developer -WhatIf
 .\wap.ps1 profile install developer
 .\wap.ps1 profile activate developer
@@ -237,6 +278,7 @@ can be removed after they are no longer needed:
 - [Configuration reference](docs/configuration.md)
 - [Scenario cookbook](docs/scenarios.md)
 - [Windows Sandbox capture](docs/capture.md)
+- [Capture refresh and versioning](docs/capture-versioning.md)
 - [Troubleshooting and logs](docs/troubleshooting.md)
 - [Design and safety model](docs/design.md)
 
@@ -278,9 +320,9 @@ Runtime files are intentionally ignored by Git:
 ## Troubleshooting logs
 
 By default every CLI invocation writes a timestamped detailed log under
-`.logs\`. The command prints the log path at the end, and failed commands also
-print where to find the detailed log. Logs are ignored by Git and are intended
-for GitHub issues.
+`logging.root` (`.logs\` by default). The command prints the log path at the
+end, and failed commands also print where to find the detailed log. Logs are
+ignored by Git and are intended for GitHub issues.
 
 Disable logging for one command:
 

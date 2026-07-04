@@ -4,7 +4,7 @@ This guide shows common WindowsAutoProfiles workflows end to end.
 
 Version: 1.1
 
-Last updated: 2026-07-04T02:24:12Z
+Last updated: 2026-07-04T02:56:40Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -298,8 +298,8 @@ If filter rules changed after a successful capture, reapply them:
 
 Before publishing:
 
-1. Review `profiles\<name>\profile.yaml` for machine-specific paths.
-2. Review `profiles\<name>\captures\<id>\metadata.json` for private notes.
+1. Review `<profilesRoot>\<name>\profile.yaml` for machine-specific paths.
+2. Review `<profilesRoot>\<name>\captures\<id>\metadata.json` for private notes.
 3. Review capture manifests before committing them; they can include local
    paths, service command lines, application names, and registry metadata.
 4. Do not commit `.capture\`; it contains raw baseline and after snapshots and

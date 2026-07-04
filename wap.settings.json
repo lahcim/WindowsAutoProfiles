@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "workspaceRoot": "%USERPROFILE%\\Workspaces",
+  "profilesRoot": "profiles",
+  "logging": {
+    "enabled": true,
+    "retentionDays": 30,
+    "root": ".logs"
+  }
+}

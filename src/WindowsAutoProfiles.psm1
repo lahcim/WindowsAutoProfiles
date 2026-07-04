@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 
 $script:WapMinimumPowerShellVersion = [version]'5.1'
 $script:WapVersion = '1.1'
-$script:WapLastUpdated = '2026-07-04T02:24:12Z'
+$script:WapLastUpdated = '2026-07-04T03:24:14Z'
 
 function Assert-WapPowerShellVersion {
     param(
@@ -35,19 +35,130 @@ function ConvertFrom-WapConfigBoolean {
     }
 }
 
+function Expand-WapConfigValue {
+    param([AllowNull()][string] $Value)
+
+    if ($null -eq $Value) { return $null }
+    $expanded = [Environment]::ExpandEnvironmentVariables($Value)
+    $expanded = [regex]::Replace($expanded, '\$\{env:([^}]+)\}', {
+        param($match)
+        $envValue = [Environment]::GetEnvironmentVariable($match.Groups[1].Value)
+        if ($null -eq $envValue) { return $match.Value }
+        return $envValue
+    }, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $expanded = [regex]::Replace($expanded, '\$env:([A-Za-z_][A-Za-z0-9_]*)', {
+        param($match)
+        $envValue = [Environment]::GetEnvironmentVariable($match.Groups[1].Value)
+        if ($null -eq $envValue) { return $match.Value }
+        return $envValue
+    }, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    return $expanded
+}
+
+function Resolve-WapConfigPathValue {
+    param(
+        [Parameter(Mandatory)][string] $Value,
+        [Parameter(Mandatory)][string] $BasePath,
+        [Parameter(Mandatory)][string] $Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw "$Name cannot be empty."
+    }
+
+    $expanded = Expand-WapConfigValue $Value.Trim()
+    if (-not [IO.Path]::IsPathRooted($expanded)) {
+        $expanded = Join-Path $BasePath $expanded
+    }
+    return [IO.Path]::GetFullPath($expanded).TrimEnd([char[]]@('\', '/'))
+}
+
+function New-WapDefaultFullConfig {
+    [pscustomobject]@{
+        version = 1
+        workspaceRoot = '%USERPROFILE%\Workspaces'
+        profilesRoot = 'profiles'
+        logging = [pscustomobject]@{
+            enabled = $true
+            retentionDays = 30
+            root = '.logs'
+        }
+    }
+}
+
+function Get-WapConfigPaths {
+    param([Parameter(Mandatory)][string] $RepositoryRoot)
+
+    $localBootstrapPath = Join-Path $RepositoryRoot 'wap.config.json'
+    if (-not (Test-Path -LiteralPath $localBootstrapPath -PathType Leaf)) {
+        return [pscustomobject]@{
+            localBootstrapPath = $localBootstrapPath
+            bootstrapPath = $localBootstrapPath
+            fullConfigPath = $localBootstrapPath
+            mode = 'missing'
+        }
+    }
+
+    try {
+        $localBootstrap = Get-Content -LiteralPath $localBootstrapPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "Configuration file '$localBootstrapPath' is invalid: $($_.Exception.Message)"
+    }
+
+    $bootstrap = $localBootstrap
+    $bootstrapPath = $localBootstrapPath
+    if ($localBootstrap.PSObject.Properties['bootstrapConfigPath'] -and
+        -not [string]::IsNullOrWhiteSpace([string]$localBootstrap.bootstrapConfigPath)) {
+        $bootstrapPath = Resolve-WapConfigPathValue -Value ([string]$localBootstrap.bootstrapConfigPath) -BasePath $RepositoryRoot -Name 'bootstrapConfigPath'
+        if (-not (Test-Path -LiteralPath $bootstrapPath -PathType Leaf)) {
+            return [pscustomobject]@{
+                localBootstrapPath = $localBootstrapPath
+                bootstrapPath = $bootstrapPath
+                fullConfigPath = $bootstrapPath
+                mode = 'missingBootstrap'
+                localBootstrap = $localBootstrap
+            }
+        }
+        try {
+            $bootstrap = Get-Content -LiteralPath $bootstrapPath -Raw | ConvertFrom-Json
+        }
+        catch {
+            throw "Bootstrap configuration file '$bootstrapPath' is invalid: $($_.Exception.Message)"
+        }
+    }
+
+    if ($bootstrap.PSObject.Properties['configPath'] -and
+        -not [string]::IsNullOrWhiteSpace([string]$bootstrap.configPath)) {
+        $bootstrapDirectory = Split-Path -Parent $bootstrapPath
+        $fullConfigPath = Resolve-WapConfigPathValue -Value ([string]$bootstrap.configPath) -BasePath $bootstrapDirectory -Name 'configPath'
+        return [pscustomobject]@{
+            localBootstrapPath = $localBootstrapPath
+            bootstrapPath = $bootstrapPath
+            fullConfigPath = $fullConfigPath
+            mode = 'external'
+            localBootstrap = $localBootstrap
+            bootstrap = $bootstrap
+        }
+    }
+
+    [pscustomobject]@{
+        localBootstrapPath = $localBootstrapPath
+        bootstrapPath = $bootstrapPath
+        fullConfigPath = $bootstrapPath
+        mode = 'inline'
+        localBootstrap = $localBootstrap
+        bootstrap = $bootstrap
+    }
+}
+
 function Get-WapRawConfig {
     param([Parameter(Mandatory)][string] $RepositoryRoot)
 
-    $path = Join-Path $RepositoryRoot 'wap.config.json'
+    $paths = Get-WapConfigPaths -RepositoryRoot $RepositoryRoot
+    $path = $paths.fullConfigPath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        return [pscustomobject]@{
-            version = 1
-            workspaceRoot = '%USERPROFILE%\Workspaces'
-            logging = [pscustomobject]@{
-                enabled = $true
-                retentionDays = 30
-            }
-        }
+        return New-WapDefaultFullConfig
     }
 
     try {
@@ -81,10 +192,19 @@ function Get-WapLogConfig {
         throw 'logging.retentionDays cannot be negative. Use 0 to disable automatic log deletion.'
     }
 
+    $rootValue = '.logs'
+    if ($raw.PSObject.Properties['logging'] -and $raw.logging -and
+        $raw.logging.PSObject.Properties['root'] -and
+        -not [string]::IsNullOrWhiteSpace([string]$raw.logging.root)) {
+        $rootValue = [string]$raw.logging.root
+    }
+    $logRoot = Resolve-WapConfigPathValue -Value $rootValue -BasePath $RepositoryRoot -Name 'logging.root'
+
     [pscustomobject]@{
         enabled = $enabled
         retentionDays = $retentionDays
-        root = Join-Path $RepositoryRoot '.logs'
+        root = $logRoot
+        rawRoot = $rootValue
     }
 }
 
@@ -156,13 +276,19 @@ function Stop-WapCommandLog {
 }
 
 function Invoke-WapLogRetentionCleanup {
-    param([Parameter(Mandatory)][string] $RepositoryRoot)
+    param(
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [string] $Root,
+        [AllowNull()] $RetentionDays
+    )
 
     $config = Get-WapLogConfig -RepositoryRoot $RepositoryRoot
-    if ($config.retentionDays -eq 0) { return }
-    if (-not (Test-Path -LiteralPath $config.root -PathType Container)) { return }
-    $cutoff = (Get-Date).ToUniversalTime().AddDays(-1 * $config.retentionDays)
-    Get-ChildItem -LiteralPath $config.root -Filter '*.log' -File -ErrorAction SilentlyContinue |
+    $cleanupRoot = if ([string]::IsNullOrWhiteSpace($Root)) { $config.root } else { $Root }
+    $cleanupRetentionDays = if ($null -ne $RetentionDays) { [int]$RetentionDays } else { $config.retentionDays }
+    if ($cleanupRetentionDays -eq 0) { return }
+    if (-not (Test-Path -LiteralPath $cleanupRoot -PathType Container)) { return }
+    $cutoff = (Get-Date).ToUniversalTime().AddDays(-1 * $cleanupRetentionDays)
+    Get-ChildItem -LiteralPath $cleanupRoot -Filter '*.log' -File -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTimeUtc -lt $cutoff } |
         ForEach-Object {
             Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Continue
@@ -361,9 +487,15 @@ function Get-WapConfig {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $RepositoryRoot)
 
-    $path = Join-Path $RepositoryRoot 'wap.config.json'
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "Configuration was not found at '$path'. Run '.\wap.ps1 init'."
+    $paths = Get-WapConfigPaths -RepositoryRoot $RepositoryRoot
+    if ($paths.mode -eq 'missing') {
+        throw "Configuration was not found at '$($paths.bootstrapPath)'. Run '.\wap.ps1 init'."
+    }
+    if ($paths.mode -eq 'missingBootstrap') {
+        throw "Bootstrap configuration was not found at '$($paths.bootstrapPath)'. Run '.\wap.ps1 config set bootstrapConfigPath <path>' or update '$($paths.localBootstrapPath)'."
+    }
+    if (-not (Test-Path -LiteralPath $paths.fullConfigPath -PathType Leaf)) {
+        throw "Full configuration was not found at '$($paths.fullConfigPath)'. Run '.\wap.ps1 init' or update configPath."
     }
 
     $config = Get-WapRawConfig -RepositoryRoot $RepositoryRoot
@@ -373,22 +505,36 @@ function Get-WapConfig {
     }
     if (-not $config.PSObject.Properties['workspaceRoot'] -or
         [string]::IsNullOrWhiteSpace([string]$config.workspaceRoot)) {
-        throw "Configuration file '$path' must define workspaceRoot."
+        throw "Configuration file '$($paths.fullConfigPath)' must define workspaceRoot."
     }
 
-    $workspaceRoot = [Environment]::ExpandEnvironmentVariables([string]$config.workspaceRoot)
+    $workspaceRoot = Expand-WapConfigValue ([string]$config.workspaceRoot)
     if (-not [IO.Path]::IsPathRooted($workspaceRoot)) {
         throw "workspaceRoot must resolve to an absolute path. Resolved value: '$workspaceRoot'."
     }
 
+    $configDirectory = Split-Path -Parent $paths.fullConfigPath
+    $profilesRootValue = if ($config.PSObject.Properties['profilesRoot'] -and
+        -not [string]::IsNullOrWhiteSpace([string]$config.profilesRoot)) {
+        [string]$config.profilesRoot
+    }
+    else {
+        'profiles'
+    }
+    $profilesRoot = Resolve-WapConfigPathValue -Value $profilesRootValue -BasePath $configDirectory -Name 'profilesRoot'
+
     $logConfig = Get-WapLogConfig -RepositoryRoot $RepositoryRoot
     [pscustomobject]@{
         version = 1
-        workspaceRoot = $workspaceRoot.TrimEnd([char[]]@('\', '/'))
+        workspaceRoot = ([IO.Path]::GetFullPath($workspaceRoot)).TrimEnd([char[]]@('\', '/'))
+        profilesRoot = $profilesRoot
         loggingEnabled = $logConfig.enabled
         loggingRetentionDays = $logConfig.retentionDays
         logRoot = $logConfig.root
-        source = $path
+        source = $paths.fullConfigPath
+        bootstrap = $paths.bootstrapPath
+        localBootstrap = $paths.localBootstrapPath
+        mode = $paths.mode
     }
 }
 function Show-WapConfig {
@@ -397,14 +543,33 @@ function Show-WapConfig {
 
     $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
     $raw = Get-Content -LiteralPath $config.source -Raw | ConvertFrom-Json
+    $bootstrap = Get-Content -LiteralPath $config.bootstrap -Raw | ConvertFrom-Json
+    $localBootstrap = Get-Content -LiteralPath $config.localBootstrap -Raw | ConvertFrom-Json
+    $rawBootstrapConfigPath = if ($localBootstrap.PSObject.Properties['bootstrapConfigPath']) { [string]$localBootstrap.bootstrapConfigPath } else { '<local wap.config.json>' }
+    $rawProfilesRoot = if ($raw.PSObject.Properties['profilesRoot']) { [string]$raw.profilesRoot } else { 'profiles' }
+    $rawConfigPath = if ($bootstrap.PSObject.Properties['configPath']) { [string]$bootstrap.configPath } else { '<inline>' }
+    $rawLoggingRoot = if ($raw.PSObject.Properties['logging'] -and $raw.logging -and $raw.logging.PSObject.Properties['root']) { [string]$raw.logging.root } else { '.logs' }
+
+    Write-Output 'Configurable settings (use ".\wap.ps1 config set <key> <value>" on these keys only):'
     [pscustomobject]@{
-        Version = $config.version
-        WorkspaceRoot = [string]$raw.workspaceRoot
-        ResolvedWorkspaceRoot = $config.workspaceRoot
-        LoggingEnabled = $config.loggingEnabled
-        LoggingRetentionDays = $config.loggingRetentionDays
-        LogRoot = $config.logRoot
-        ConfigPath = $config.source
+        version = $config.version
+        bootstrapConfigPath = $rawBootstrapConfigPath
+        configPath = $rawConfigPath
+        workspaceRoot = [string]$raw.workspaceRoot
+        profilesRoot = $rawProfilesRoot
+        'logging.enabled' = $config.loggingEnabled
+        'logging.retentionDays' = $config.loggingRetentionDays
+        'logging.root' = $rawLoggingRoot
+    } | Format-List
+    Write-Output ''
+    Write-Output 'Dynamic resolved settings (read-only; computed at runtime from the configurable settings above):'
+    [pscustomobject]@{
+        'local.bootstrapConfigPath' = $config.localBootstrap
+        'resolved.bootstrapConfigPath' = $config.bootstrap
+        'resolved.configPath' = $config.source
+        'resolved.workspaceRoot' = $config.workspaceRoot
+        'resolved.profilesRoot' = $config.profilesRoot
+        'resolved.logging.root' = $config.logRoot
     } | Format-List
 }
 
@@ -416,7 +581,8 @@ function Set-WapConfig {
         [Parameter(Mandatory)][string] $RepositoryRoot
     )
 
-    $path = Join-Path $RepositoryRoot 'wap.config.json'
+    $paths = Get-WapConfigPaths -RepositoryRoot $RepositoryRoot
+    $path = if ($Key -eq 'bootstrapConfigPath') { $paths.localBootstrapPath } elseif ($Key -eq 'configPath') { $paths.bootstrapPath } else { $paths.fullConfigPath }
     $raw = Get-WapRawConfig -RepositoryRoot $RepositoryRoot
     $storedValue = $Value.Trim()
     $resolvedValue = $null
@@ -434,15 +600,118 @@ function Set-WapConfig {
     }
 
     switch ($Key) {
+        'bootstrapConfigPath' {
+            if ([string]::IsNullOrWhiteSpace($Value)) {
+                throw 'bootstrapConfigPath cannot be empty.'
+            }
+            $localBootstrap = if (Test-Path -LiteralPath $paths.localBootstrapPath -PathType Leaf) {
+                Get-Content -LiteralPath $paths.localBootstrapPath -Raw | ConvertFrom-Json
+            }
+            else {
+                [pscustomobject]@{ version = 1 }
+            }
+            if (-not $localBootstrap.PSObject.Properties['version']) {
+                Add-Member -InputObject $localBootstrap -MemberType NoteProperty -Name version -Value 1
+            }
+            $resolvedValue = Resolve-WapConfigPathValue -Value $storedValue -BasePath $RepositoryRoot -Name 'bootstrapConfigPath'
+            if (-not $localBootstrap.PSObject.Properties['bootstrapConfigPath']) {
+                Add-Member -InputObject $localBootstrap -MemberType NoteProperty -Name bootstrapConfigPath -Value $storedValue
+            }
+            else {
+                $localBootstrap.bootstrapConfigPath = $storedValue
+            }
+
+            if (-not (Test-Path -LiteralPath $resolvedValue -PathType Leaf)) {
+                $targetDirectory = Split-Path -Parent $resolvedValue
+                if ($PSCmdlet.ShouldProcess($targetDirectory, 'Create bootstrap configuration directory')) {
+                    New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
+                }
+                $existingConfigPath = if ($paths.PSObject.Properties['bootstrap'] -and $paths.bootstrap -and
+                    $paths.bootstrap.PSObject.Properties['configPath']) {
+                    [string]$paths.bootstrap.configPath
+                }
+                else {
+                    'wap.settings.json'
+                }
+                $bootstrapToWrite = [pscustomobject]@{
+                    version = 1
+                    configPath = $existingConfigPath
+                }
+                if ($PSCmdlet.ShouldProcess($resolvedValue, 'Create bootstrap configuration file')) {
+                    $bootstrapToWrite | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedValue -Encoding utf8
+                }
+            }
+            if ($PSCmdlet.ShouldProcess($paths.localBootstrapPath, "Set $Key to '$storedValue'")) {
+                $temp = "$($paths.localBootstrapPath).tmp"
+                $localBootstrap | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temp -Encoding utf8
+                Move-Item -LiteralPath $temp -Destination $paths.localBootstrapPath -Force
+            }
+            if (-not $WhatIfPreference) {
+                Write-Host "$Key set to '$storedValue'."
+                Write-Host "Resolved bootstrap config path: $resolvedValue"
+            }
+            return
+        }
+        'configPath' {
+            if ([string]::IsNullOrWhiteSpace($Value)) {
+                throw 'configPath cannot be empty.'
+            }
+            $bootstrap = if (Test-Path -LiteralPath $paths.bootstrapPath -PathType Leaf) {
+                Get-Content -LiteralPath $paths.bootstrapPath -Raw | ConvertFrom-Json
+            }
+            else {
+                [pscustomobject]@{ version = 1 }
+            }
+            if (-not $bootstrap.PSObject.Properties['version']) {
+                Add-Member -InputObject $bootstrap -MemberType NoteProperty -Name version -Value 1
+            }
+            $bootstrapDirectory = Split-Path -Parent $paths.bootstrapPath
+            $resolvedValue = Resolve-WapConfigPathValue -Value $storedValue -BasePath $bootstrapDirectory -Name 'configPath'
+            if (-not $bootstrap.PSObject.Properties['configPath']) {
+                Add-Member -InputObject $bootstrap -MemberType NoteProperty -Name configPath -Value $storedValue
+            }
+            else {
+                $bootstrap.configPath = $storedValue
+            }
+            if (-not (Test-Path -LiteralPath $resolvedValue -PathType Leaf)) {
+                $targetDirectory = Split-Path -Parent $resolvedValue
+                if ($PSCmdlet.ShouldProcess($targetDirectory, 'Create full configuration directory')) {
+                    New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
+                }
+                if ($PSCmdlet.ShouldProcess($resolvedValue, 'Create full configuration file')) {
+                    $raw | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedValue -Encoding utf8
+                }
+            }
+            if ($PSCmdlet.ShouldProcess($paths.bootstrapPath, "Set $Key to '$storedValue'")) {
+                $temp = "$($paths.bootstrapPath).tmp"
+                $bootstrap | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temp -Encoding utf8
+                Move-Item -LiteralPath $temp -Destination $paths.bootstrapPath -Force
+            }
+            if (-not $WhatIfPreference) {
+                Write-Host "$Key set to '$storedValue'."
+                Write-Host "Resolved config path: $resolvedValue"
+            }
+            return
+        }
         'workspaceRoot' {
             if ([string]::IsNullOrWhiteSpace($Value)) {
                 throw 'workspaceRoot cannot be empty.'
             }
-            $resolvedValue = [Environment]::ExpandEnvironmentVariables($storedValue)
+            $resolvedValue = Expand-WapConfigValue $storedValue
             if (-not [IO.Path]::IsPathRooted($resolvedValue)) {
                 throw "workspaceRoot must resolve to an absolute path. Resolved value: '$resolvedValue'."
             }
             $raw.workspaceRoot = $storedValue
+        }
+        'profilesRoot' {
+            $configDirectory = Split-Path -Parent $paths.fullConfigPath
+            $resolvedValue = Resolve-WapConfigPathValue -Value $storedValue -BasePath $configDirectory -Name 'profilesRoot'
+            if (-not $raw.PSObject.Properties['profilesRoot']) {
+                Add-Member -InputObject $raw -MemberType NoteProperty -Name profilesRoot -Value $storedValue
+            }
+            else {
+                $raw.profilesRoot = $storedValue
+            }
         }
         'logging.enabled' {
             $raw.logging.enabled = ConvertFrom-WapConfigBoolean -Name $Key -Value $storedValue
@@ -454,8 +723,42 @@ function Set-WapConfig {
             }
             $raw.logging.retentionDays = $days
         }
+        'logging.root' {
+            if ([string]::IsNullOrWhiteSpace($Value)) {
+                throw 'logging.root cannot be empty.'
+            }
+            $resolvedValue = Resolve-WapConfigPathValue -Value $storedValue -BasePath $RepositoryRoot -Name 'logging.root'
+            if (-not $raw.logging.PSObject.Properties['root']) {
+                Add-Member -InputObject $raw.logging -MemberType NoteProperty -Name root -Value $storedValue
+            }
+            else {
+                $raw.logging.root = $storedValue
+            }
+        }
+        { $_ -in @('ResolvedConfigPath', 'ResolvedWorkspaceRoot', 'ResolvedProfilesRoot', 'ResolvedBootstrapConfigPath', 'LocalBootstrapConfigPath', 'ResolvedLoggingRoot', 'resolved.configPath', 'resolved.workspaceRoot', 'resolved.profilesRoot', 'resolved.bootstrapConfigPath', 'local.bootstrapConfigPath', 'resolved.logging.root') } {
+            $targetKey = switch ($Key) {
+                'ResolvedConfigPath' { 'configPath' }
+                'ResolvedWorkspaceRoot' { 'workspaceRoot' }
+                'ResolvedProfilesRoot' { 'profilesRoot' }
+                'ResolvedBootstrapConfigPath' { 'bootstrapConfigPath' }
+                'ResolvedLoggingRoot' { 'logging.root' }
+                'resolved.configPath' { 'configPath' }
+                'resolved.workspaceRoot' { 'workspaceRoot' }
+                'resolved.profilesRoot' { 'profilesRoot' }
+                'resolved.bootstrapConfigPath' { 'bootstrapConfigPath' }
+                'resolved.logging.root' { 'logging.root' }
+                default { $null }
+            }
+            if ($targetKey) {
+                throw "Configuration key '$Key' is dynamic and read-only. Set '$targetKey' instead; WAP resolves '$Key' at runtime."
+            }
+            throw "Configuration key '$Key' is dynamic and read-only. It is shown by 'config show' for diagnostics and cannot be set."
+        }
+        { $_ -in @('LoggingRoot', 'loggingRoot', 'loggingroot') } {
+            throw "Unknown configuration key '$Key'. Use 'logging.root' instead."
+        }
         default {
-            throw "Unknown configuration key '$Key'. Supported keys: workspaceRoot, logging.enabled, logging.retentionDays."
+            throw "Unknown configuration key '$Key'. Supported keys: bootstrapConfigPath, configPath, workspaceRoot, profilesRoot, logging.enabled, logging.retentionDays, logging.root."
         }
     }
 
@@ -467,7 +770,19 @@ function Set-WapConfig {
 
     if (-not $WhatIfPreference) {
         Write-Host "$Key set to '$storedValue'."
-        if ($resolvedValue) { Write-Host "Resolved workspace root: $resolvedValue" }
+        if ($resolvedValue) {
+            switch ($Key) {
+                'workspaceRoot' { Write-Host "Resolved workspace root: $resolvedValue" }
+                'profilesRoot' { Write-Host "Resolved profiles root: $resolvedValue" }
+                'logging.root' {
+                    Write-Host "Resolved logging root: $resolvedValue"
+                    if (-not (Test-Path -LiteralPath $resolvedValue -PathType Container)) {
+                        Write-Warning "Logging root does not exist yet. It will be created when logging starts on the next command."
+                    }
+                }
+                default { Write-Host "Resolved value: $resolvedValue" }
+            }
+        }
     }
 }
 function Import-WapProfile {
@@ -481,7 +796,8 @@ function Import-WapProfile {
         throw "Invalid profile name '$Name'. Use letters, numbers, dots, underscores, and hyphens."
     }
 
-    $path = Join-Path $RepositoryRoot "profiles/$Name/profile.yaml"
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    $path = Join-Path (Join-Path $config.profilesRoot $Name) 'profile.yaml'
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Profile '$Name' was not found at '$path'."
     }
@@ -502,7 +818,6 @@ function Import-WapProfile {
         throw "Profile name '$($raw.name)' does not match directory name '$Name'."
     }
 
-    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
     $workspaceRoot = $config.workspaceRoot
     $profileRoot = [IO.Path]::Combine($workspaceRoot, $Name)
     $sharedRoot = [IO.Path]::Combine($workspaceRoot, '_Shared')
@@ -688,6 +1003,38 @@ function Install-WapShortcut {
     return $path
 }
 
+function Get-WapProfileCapturePlan {
+    param(
+        [Parameter(Mandatory)][string] $Name,
+        [Parameter(Mandatory)][string] $RepositoryRoot
+    )
+
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    $capturesRoot = Join-Path (Join-Path $config.profilesRoot $Name) 'captures'
+    if (-not (Test-Path -LiteralPath $capturesRoot -PathType Container)) { return @() }
+    return @(
+        Get-ChildItem -LiteralPath $capturesRoot -Directory |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'metadata.json') } |
+            ForEach-Object {
+                $metadata = Get-Content -LiteralPath (Join-Path $_.FullName 'metadata.json') -Raw | ConvertFrom-Json
+                $selected = if ($metadata.PSObject.Properties['selectedVersion']) { [string]$metadata.selectedVersion } else { 'base' }
+                $versions = @($metadata.versions | Where-Object { $null -ne $_ } | Sort-Object version)
+                $selectedVersions = if ($selected -eq 'base') {
+                    @()
+                }
+                else {
+                    @($versions | Where-Object { $_.version -le $selected } | Select-Object -ExpandProperty version)
+                }
+                [pscustomobject]@{
+                    id = $metadata.id
+                    name = $metadata.name
+                    selectedVersion = $selected
+                    replayVersions = @($selectedVersions)
+                }
+            }
+    )
+}
+
 function Install-WapProfile {
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -745,6 +1092,13 @@ function Install-WapProfile {
         }
     }
 
+    $capturePlan = @(Get-WapProfileCapturePlan -Name $Name -RepositoryRoot $RepositoryRoot)
+    Write-Host "  Attached captures: $($capturePlan.Count) declared"
+    foreach ($capture in $capturePlan) {
+        $replay = if ($capture.replayVersions.Count) { ($capture.replayVersions -join ', ') } else { 'base only' }
+        Write-Host "    [capture] $($capture.id) selected=$($capture.selectedVersion) replay=$replay"
+    }
+
     if (-not $WhatIfPreference) {
         $state.profiles[$Name] = [ordered]@{
             installed = $true
@@ -756,6 +1110,7 @@ function Install-WapProfile {
             packages = @($profile.apps.id)
             installedPackages = @($installedPackages)
             shortcuts = @($createdShortcuts)
+            captures = @($capturePlan)
             activation = if ($existing) { $existing.activation } else { $null }
             installedAt = (Get-Date).ToUniversalTime().ToString('o')
         }
@@ -906,7 +1261,8 @@ function Get-WapProfileCaptureManifests {
         [Parameter(Mandatory)][string] $RepositoryRoot
     )
 
-    $capturesRoot = Join-Path $RepositoryRoot "profiles/$Name/captures"
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    $capturesRoot = Join-Path (Join-Path $config.profilesRoot $Name) 'captures'
     if (-not (Test-Path -LiteralPath $capturesRoot -PathType Container)) { return @() }
     return @(
         Get-ChildItem -LiteralPath $capturesRoot -Filter 'capture-manifest.json' -Recurse -File |
@@ -1173,7 +1529,7 @@ function Show-WapStatus {
 
     $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
     $state = Get-WapState $RepositoryRoot
-    $profilesPath = Join-Path $RepositoryRoot 'profiles'
+    $profilesPath = $config.profilesRoot
     $availableNames = @(
         Get-ChildItem -LiteralPath $profilesPath -Directory -ErrorAction SilentlyContinue |
             Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'profile.yaml') } |
@@ -1184,6 +1540,7 @@ function Show-WapStatus {
     $activeName = if ($state.activeProfile) { [string]$state.activeProfile } else { '<none>' }
 
     Write-Host "Workspace root:  $($config.workspaceRoot)"
+    Write-Host "Profiles root:   $($config.profilesRoot)"
     Write-Host "Active profile: $activeName"
     Write-Host "Installed:      $installedCount"
     if (-not $names.Count) {
@@ -1723,11 +2080,12 @@ function Get-WapProfileCaptureRoot {
     if ($ProfileName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
         throw "Invalid profile name '$ProfileName'."
     }
-    $profilePath = Join-Path $RepositoryRoot "profiles/$ProfileName/profile.yaml"
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    $profilePath = Join-Path (Join-Path $config.profilesRoot $ProfileName) 'profile.yaml'
     if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
         throw "Profile '$ProfileName' was not found at '$profilePath'."
     }
-    return Join-Path $RepositoryRoot "profiles/$ProfileName/captures"
+    return Join-Path (Join-Path $config.profilesRoot $ProfileName) 'captures'
 }
 
 function Get-WapProfileCaptureId {
@@ -1830,6 +2188,8 @@ function Add-WapProfileCapture {
         sourceCapture = $CaptureName
         sourceCapturePath = $captureRoot
         manifest = 'capture-manifest.json'
+        selectedVersion = 'base'
+        versions = @()
     } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $targetRoot 'metadata.json') -Encoding UTF8
 
     Write-Host "Added capture '$id' to profile '$ProfileName'."
@@ -1851,7 +2211,7 @@ function Show-WapProfileCaptures {
         Write-Host "Profile '$ProfileName' has no captures."
         return
     }
-    $items | Sort-Object id | Select-Object id, name, createdAt, addedAt, description | Format-Table -AutoSize -Wrap
+    $items | Sort-Object id | Select-Object id, name, selectedVersion, createdAt, addedAt, description | Format-Table -AutoSize -Wrap
 }
 
 function Remove-WapProfileCapture {
@@ -1932,6 +2292,276 @@ function Edit-WapProfileCapture {
     Set-WapObjectProperty -Object $metadata -Name updatedAt -Value ((Get-Date).ToUniversalTime().ToString('o'))
     $metadata | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
     Write-Host "Updated capture '$CaptureId' on profile '$ProfileName'."
+}
+
+function Get-WapProfileCapturePath {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $CaptureId,
+        [Parameter(Mandatory)][string] $RepositoryRoot
+    )
+
+    $root = Get-WapProfileCaptureRoot -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot
+    $id = Get-WapProfileCaptureId $CaptureId
+    $path = Join-Path $root $id
+    if (-not (Test-Path -LiteralPath (Join-Path $path 'metadata.json') -PathType Leaf)) {
+        throw "Capture '$id' is not attached to profile '$ProfileName'."
+    }
+    return $path
+}
+
+function Get-WapCaptureVersionFields {
+    return @(
+        'addedFiles',
+        'addedDirectories',
+        'changedFiles',
+        'changedRegistryKeys',
+        'newServices',
+        'newScheduledTasks',
+        'newShortcuts',
+        'suspectedUninstallCommands',
+        'filteredAddedFiles',
+        'filteredRegistryKeys',
+        'filteredUninstallCommands'
+    )
+}
+
+function Get-WapCaptureItemIdentity {
+    param($Item)
+
+    foreach ($propertyName in @('path', 'key', 'Name', 'TaskName', 'command', 'registryKey')) {
+        $value = Get-WapObjectProperty -Object $Item -Name $propertyName
+        if ($null -ne $value -and -not [string]::IsNullOrWhiteSpace([string]$value)) {
+            return "$propertyName=$([string]$value)".ToLowerInvariant()
+        }
+    }
+    return ($Item | ConvertTo-Json -Depth 12 -Compress).ToLowerInvariant()
+}
+
+function Merge-WapCaptureManifestArray {
+    param(
+        [Parameter(Mandatory)] $Manifest,
+        [Parameter(Mandatory)][string] $FieldName,
+        $Items
+    )
+
+    $existing = [System.Collections.ArrayList]::new()
+    $seen = @{}
+    foreach ($item in @(Read-WapCaptureJsonItems (Get-WapObjectProperty -Object $Manifest -Name $FieldName))) {
+        $identity = Get-WapCaptureItemIdentity -Item $item
+        if (-not $seen.ContainsKey($identity)) {
+            $seen[$identity] = $true
+            [void]$existing.Add($item)
+        }
+    }
+    foreach ($item in @(Read-WapCaptureJsonItems $Items)) {
+        $identity = Get-WapCaptureItemIdentity -Item $item
+        if (-not $seen.ContainsKey($identity)) {
+            $seen[$identity] = $true
+            [void]$existing.Add($item)
+        }
+    }
+    Set-WapObjectProperty -Object $Manifest -Name $FieldName -Value @($existing.ToArray())
+}
+
+function Get-WapEffectiveProfileCaptureManifest {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $CaptureId,
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [string] $UpToVersion
+    )
+
+    $capturePath = Get-WapProfileCapturePath -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot
+    $manifestPath = Join-Path $capturePath 'capture-manifest.json'
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $metadata = Read-WapProfileCaptureMetadata -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot
+    $targetVersion = if ($UpToVersion) { $UpToVersion } elseif ($metadata.PSObject.Properties['selectedVersion']) { [string]$metadata.selectedVersion } else { 'base' }
+    if ($targetVersion -eq 'base') { return $manifest }
+
+    $versions = @($metadata.versions | Where-Object { $null -ne $_ } | Sort-Object version)
+    foreach ($version in $versions) {
+        $deltaPath = Join-Path $capturePath ([string]$version.delta)
+        if (-not (Test-Path -LiteralPath $deltaPath -PathType Leaf)) {
+            throw "Capture version delta '$deltaPath' was not found."
+        }
+        $delta = Get-Content -LiteralPath $deltaPath -Raw | ConvertFrom-Json
+        foreach ($field in (Get-WapCaptureVersionFields)) {
+            Merge-WapCaptureManifestArray -Manifest $manifest -FieldName $field -Items (Get-WapObjectProperty -Object $delta -Name $field)
+        }
+        if ([string]$version.version -eq $targetVersion) { return $manifest }
+    }
+    throw "Version '$targetVersion' was not found for capture '$CaptureId' on profile '$ProfileName'."
+}
+
+function New-WapCaptureDelta {
+    param(
+        [Parameter(Mandatory)] $CurrentManifest,
+        [Parameter(Mandatory)] $NewManifest
+    )
+
+    $delta = [ordered]@{
+        version = 1
+        createdAt = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    foreach ($field in (Get-WapCaptureVersionFields)) {
+        $currentIds = @{}
+        foreach ($item in @(Read-WapCaptureJsonItems (Get-WapObjectProperty -Object $CurrentManifest -Name $field))) {
+            $currentIds[(Get-WapCaptureItemIdentity -Item $item)] = $true
+        }
+        $added = @(
+            Read-WapCaptureJsonItems (Get-WapObjectProperty -Object $NewManifest -Name $field) |
+                Where-Object { -not $currentIds.ContainsKey((Get-WapCaptureItemIdentity -Item $_)) }
+        )
+        $delta[$field] = @($added)
+    }
+    return [pscustomobject]$delta
+}
+
+function Get-WapNextCaptureVersion {
+    param($Metadata)
+
+    $max = 0
+    foreach ($version in @($Metadata.versions | Where-Object { $null -ne $_ })) {
+        if ([string]$version.version -match '^v(\d+)$') {
+            $number = [int]$Matches[1]
+            if ($number -gt $max) { $max = $number }
+        }
+    }
+    return ('v{0:0000}' -f ($max + 1))
+}
+
+function Update-WapProfileCaptureMetadata {
+    param(
+        [Parameter(Mandatory)][string] $CapturePath,
+        [Parameter(Mandatory)] $Metadata
+    )
+
+    Set-WapObjectProperty -Object $Metadata -Name updatedAt -Value ((Get-Date).ToUniversalTime().ToString('o'))
+    $Metadata | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $CapturePath 'metadata.json') -Encoding UTF8
+}
+
+function Refresh-WapProfileCapture {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $CaptureId,
+        [Parameter(Mandatory)][string] $CaptureName,
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [string] $Description,
+        [switch] $Apply
+    )
+
+    $capturePath = Get-WapProfileCapturePath -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot
+    $metadata = Read-WapProfileCaptureMetadata -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot
+    if (-not $metadata.PSObject.Properties['versions']) { Set-WapObjectProperty -Object $metadata -Name versions -Value @() }
+    if (-not $metadata.PSObject.Properties['selectedVersion']) { Set-WapObjectProperty -Object $metadata -Name selectedVersion -Value 'base' }
+
+    $newManifest = Read-WapCaptureManifest -Name $CaptureName -RepositoryRoot $RepositoryRoot
+    $currentManifest = Get-WapEffectiveProfileCaptureManifest -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot
+    $delta = New-WapCaptureDelta -CurrentManifest $currentManifest -NewManifest $newManifest
+    $newVersion = Get-WapNextCaptureVersion -Metadata $metadata
+    Set-WapObjectProperty -Object $delta -Name profileName -Value $ProfileName
+    Set-WapObjectProperty -Object $delta -Name captureId -Value (Get-WapProfileCaptureId $CaptureId)
+    Set-WapObjectProperty -Object $delta -Name sourceCapture -Value $CaptureName
+    Set-WapObjectProperty -Object $delta -Name version -Value $newVersion
+    if ($Description) { Set-WapObjectProperty -Object $delta -Name description -Value $Description }
+
+    $versionRoot = Join-Path $capturePath "versions/$newVersion"
+    New-Item -ItemType Directory -Path $versionRoot -Force | Out-Null
+    $deltaPath = Join-Path $versionRoot 'capture-delta.json'
+    $delta | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $deltaPath -Encoding UTF8
+
+    $versionEntry = [ordered]@{
+        version = $newVersion
+        createdAt = (Get-Date).ToUniversalTime().ToString('o')
+        sourceCapture = $CaptureName
+        description = if ($Description) { $Description } else { '' }
+        delta = "versions/$newVersion/capture-delta.json"
+    }
+    $versions = @($metadata.versions | Where-Object { $null -ne $_ }) + @([pscustomobject]$versionEntry)
+    Set-WapObjectProperty -Object $metadata -Name versions -Value @($versions)
+    if ($Apply) { Set-WapObjectProperty -Object $metadata -Name selectedVersion -Value $newVersion }
+    Update-WapProfileCaptureMetadata -CapturePath $capturePath -Metadata $metadata
+
+    Write-Host "Added refresh version '$newVersion' to capture '$CaptureId' on profile '$ProfileName'."
+    if ($Apply) { Write-Host "Selected version is now '$newVersion'." }
+    foreach ($field in (Get-WapCaptureVersionFields)) {
+        $count = @(Read-WapCaptureJsonItems (Get-WapObjectProperty -Object $delta -Name $field)).Count
+        if ($count) { Write-Host ("  {0}: {1}" -f $field, $count) }
+    }
+}
+
+function Show-WapProfileCaptureVersions {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $CaptureId,
+        [Parameter(Mandatory)][string] $RepositoryRoot
+    )
+
+    $metadata = Read-WapProfileCaptureMetadata -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot
+    Write-Host "Capture '$CaptureId' on profile '$ProfileName'"
+    Write-Host "Selected version: $(if ($metadata.PSObject.Properties['selectedVersion']) { $metadata.selectedVersion } else { 'base' })"
+    $versions = @($metadata.versions | Where-Object { $null -ne $_ } | Sort-Object version)
+    if (-not $versions.Count) {
+        Write-Host 'No refresh versions. Base manifest only.'
+        return
+    }
+    $versions | Select-Object version, createdAt, sourceCapture, description | Format-Table -AutoSize -Wrap
+}
+
+function Select-WapProfileCaptureVersion {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $CaptureId,
+        [Parameter(Mandatory)][string] $Version,
+        [Parameter(Mandatory)][string] $RepositoryRoot
+    )
+
+    $capturePath = Get-WapProfileCapturePath -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot
+    $metadata = Read-WapProfileCaptureMetadata -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot
+    $selected = if ($Version -eq 'latest') {
+        $latest = @($metadata.versions | Where-Object { $null -ne $_ } | Sort-Object version | Select-Object -Last 1)
+        if (-not $latest) { 'base' } else { [string]$latest.version }
+    }
+    else { $Version }
+    if ($selected -ne 'base' -and -not (@($metadata.versions | Where-Object { $_.version -eq $selected }).Count)) {
+        throw "Version '$selected' was not found for capture '$CaptureId'."
+    }
+    Set-WapObjectProperty -Object $metadata -Name selectedVersion -Value $selected
+    Update-WapProfileCaptureMetadata -CapturePath $capturePath -Metadata $metadata
+    Write-Host "Selected version '$selected' for capture '$CaptureId' on profile '$ProfileName'."
+}
+
+function Merge-WapProfileCaptureVersions {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $CaptureId,
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [string] $UpToVersion
+    )
+
+    $capturePath = Get-WapProfileCapturePath -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot
+    $metadata = Read-WapProfileCaptureMetadata -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot
+    $target = if ($UpToVersion) { $UpToVersion } elseif ($metadata.PSObject.Properties['selectedVersion']) { [string]$metadata.selectedVersion } else { 'base' }
+    if ($target -eq 'base') {
+        Write-Host "Capture '$CaptureId' is already at base; nothing to merge."
+        return
+    }
+    $effective = Get-WapEffectiveProfileCaptureManifest -ProfileName $ProfileName -CaptureId $CaptureId -RepositoryRoot $RepositoryRoot -UpToVersion $target
+    $manifestPath = Join-Path $capturePath 'capture-manifest.json'
+    $backupPath = Join-Path $capturePath ("capture-manifest.before-merge-{0}.json" -f (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ'))
+    Copy-Item -LiteralPath $manifestPath -Destination $backupPath
+    Set-WapObjectProperty -Object $effective -Name mergedAt -Value ((Get-Date).ToUniversalTime().ToString('o'))
+    Set-WapObjectProperty -Object $effective -Name mergedThroughVersion -Value $target
+    $effective | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+
+    $remaining = @($metadata.versions | Where-Object { $_.version -gt $target })
+    Set-WapObjectProperty -Object $metadata -Name versions -Value @($remaining)
+    Set-WapObjectProperty -Object $metadata -Name selectedVersion -Value 'base'
+    Set-WapObjectProperty -Object $metadata -Name lastMergedVersion -Value $target
+    Update-WapProfileCaptureMetadata -CapturePath $capturePath -Metadata $metadata
+    Write-Host "Merged capture '$CaptureId' through version '$target'."
+    Write-Host "Backup: $backupPath"
 }
 
 function Show-WapCaptureDiff {
@@ -2057,7 +2687,8 @@ function Remove-WapProfileDefinition {
         throw "Profile '$Name' is installed or active. Uninstall it before deleting its definition."
     }
 
-    $profilesRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot 'profiles'))
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    $profilesRoot = [IO.Path]::GetFullPath($config.profilesRoot)
     $profilePath = [IO.Path]::GetFullPath((Join-Path $profilesRoot $Name))
     if ([IO.Path]::GetDirectoryName($profilePath) -ne $profilesRoot) {
         throw "Refusing to delete a path outside '$profilesRoot'."
@@ -2074,6 +2705,66 @@ function Remove-WapProfileDefinition {
         Write-Host "Done: profile definition '$Name' deleted."
     }
 }
+
+function New-WapProfileDefinition {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string] $Name,
+        [Parameter(Mandatory)][string] $RepositoryRoot
+    )
+
+    if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+        throw "Invalid profile name '$Name'. Use letters, numbers, dots, underscores, and hyphens."
+    }
+
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    $profilesRoot = [IO.Path]::GetFullPath($config.profilesRoot)
+    $profileDirectory = [IO.Path]::GetFullPath((Join-Path $profilesRoot $Name))
+    if ([IO.Path]::GetDirectoryName($profileDirectory) -ne $profilesRoot) {
+        throw "Refusing to create a path outside '$profilesRoot'."
+    }
+
+    $profilePath = Join-Path $profileDirectory 'profile.yaml'
+    if (Test-Path -LiteralPath $profilePath -PathType Leaf) {
+        throw "Profile '$Name' already exists at '$profilePath'."
+    }
+    $existingItems = @()
+    $profileDirectoryExists = Test-Path -LiteralPath $profileDirectory -PathType Container
+    if ($profileDirectoryExists) {
+        $existingItems = @(Get-ChildItem -LiteralPath $profileDirectory -Force -ErrorAction SilentlyContinue)
+    }
+    if ($profileDirectoryExists -and $existingItems.Count) {
+        throw "Profile directory '$profileDirectory' already exists and is not empty."
+    }
+
+    $lines = @(
+        "# Created $(Get-Date -Format o)"
+        "# WindowsAutoProfiles profile"
+        "name: $Name"
+        'apps:'
+        '  # - id: Git.Git'
+        'env:'
+        "  WAP_PROFILE: $Name"
+        'path:'
+        '  # - ${profileRoot}\Apps\bin'
+        'projects: ${profileRoot}\Projects'
+        'data: ${profileRoot}\Data'
+        'downloads: ${profileRoot}\Downloads'
+        'cache: ${profileRoot}\Cache'
+        'shortcuts:'
+        '  # - name: Example'
+        '  #   target: ${profileRoot}\Apps\Example.exe'
+    )
+
+    if ($PSCmdlet.ShouldProcess($profilePath, 'Create empty profile definition')) {
+        New-Item -ItemType Directory -Path $profileDirectory -Force | Out-Null
+        $lines | Set-Content -LiteralPath $profilePath -Encoding utf8
+        Write-Host "Created profile '$Name' at '$profilePath'."
+        Write-Host "Edit it, then install it with:"
+        Write-Host "  .\wap.ps1 profile install $Name"
+    }
+}
+
 function New-WapCapture {
     param(
         [Parameter(Mandatory)][string] $Name,
@@ -2081,7 +2772,8 @@ function New-WapCapture {
     )
 
     if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Invalid profile name '$Name'." }
-    $directory = Join-Path $RepositoryRoot "profiles/$Name"
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    $directory = Join-Path $config.profilesRoot $Name
     $path = Join-Path $directory 'profile.yaml'
     if (Test-Path -LiteralPath $path) { throw "Profile '$Name' already exists." }
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
@@ -2144,12 +2836,21 @@ function Initialize-Wap {
     if (-not (Test-Path -LiteralPath $configPath)) {
         [ordered]@{
             version = 1
+            configPath = 'wap.settings.json'
+        } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding utf8
+    }
+    $fullConfigPath = Join-Path $RepositoryRoot 'wap.settings.json'
+    if (-not (Test-Path -LiteralPath $fullConfigPath)) {
+        [ordered]@{
+            version = 1
             workspaceRoot = '%USERPROFILE%\Workspaces'
+            profilesRoot = 'profiles'
             logging = [ordered]@{
                 enabled = $true
                 retentionDays = 30
+                root = '.logs'
             }
-        } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding utf8
+        } | ConvertTo-Json | Set-Content -LiteralPath $fullConfigPath -Encoding utf8
     }
 
     $statePath = Join-Path $RepositoryRoot '.wap-state.json'
@@ -2163,20 +2864,27 @@ function Show-WapHelp {
     @'
 WindowsAutoProfiles
 Version: 1.1
-Last updated: 2026-07-04T02:24:12Z
+Last updated: 2026-07-04T03:24:14Z
 Author: Michal Zygmunt <lahcim@fajne.com>
 Minimum PowerShell: 5.1
 
 Usage:
+  .\wap.ps1 --help
+  .\wap.ps1 --examples
   .\wap.ps1 init
   .\wap.ps1 config show
+  .\wap.ps1 config set bootstrapConfigPath <path> [-WhatIf]
+  .\wap.ps1 config set configPath <path> [-WhatIf]
   .\wap.ps1 config set workspaceRoot <path> [-WhatIf]
+  .\wap.ps1 config set profilesRoot <path> [-WhatIf]
   .\wap.ps1 config set logging.enabled <true|false> [-WhatIf]
   .\wap.ps1 config set logging.retentionDays <days> [-WhatIf]
+  .\wap.ps1 config set logging.root <path> [-WhatIf]
   .\wap.ps1 logs cleanup [-WhatIf]
   .\wap.ps1 profile install <name> [-WhatIf]
   .\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]
   .\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all] [-WhatIf]
+  .\wap.ps1 profile new <name> [-WhatIf]
   .\wap.ps1 profile activate <name> [-WhatIf]
   .\wap.ps1 profile deactivate <name> [-WhatIf]
   .\wap.ps1 profile delete <name> [-WhatIf]
@@ -2187,6 +2895,10 @@ Usage:
   .\wap.ps1 profile capture remove <profile> <captureId> [-WhatIf]
   .\wap.ps1 profile capture copy <fromProfile> <captureId> <toProfile> [--id <id>] [--name <name>] [--description <text>]
   .\wap.ps1 profile capture edit <profile> <captureId> [--name <name>] [--description <text>]
+  .\wap.ps1 profile capture refresh <profile> <captureId> <capture> [--description <text>] [--apply]
+  .\wap.ps1 profile capture versions <profile> <captureId>
+  .\wap.ps1 profile capture select-version <profile> <captureId> <base|latest|version>
+  .\wap.ps1 profile capture merge <profile> <captureId> [--up-to <version>]
   .\wap.ps1 capture new <name>
   .\wap.ps1 capture start <name> [-WhatIf]
   .\wap.ps1 capture list
@@ -2197,8 +2909,60 @@ Usage:
   .\wap.ps1 capture remove <name> [-WhatIf]
 
 Global options:
+  --examples  Show step-by-step populated examples from docs\examples.md.
   --no-log    Disable command logging for this invocation.
 '@ | Write-Host
+}
+
+function Show-WapExamples {
+    param(
+        [Parameter(Mandatory)][string] $RepositoryRoot
+    )
+
+    $examplesPath = Join-Path $RepositoryRoot 'docs\examples.md'
+    if (-not (Test-Path -LiteralPath $examplesPath -PathType Leaf)) {
+        throw "Examples file not found at '$examplesPath'."
+    }
+
+    Get-Content -LiteralPath $examplesPath -Raw | Write-Host
+}
+
+function Test-WapCliMissingToken {
+    param([AllowNull()][object[]] $Arguments)
+
+    return (-not $Arguments -or
+        -not $Arguments.Count -or
+        [string]::IsNullOrWhiteSpace([string]$Arguments[0]))
+}
+
+function New-WapCliSuggestionMessage {
+    param(
+        [Parameter(Mandatory)][string] $Message,
+        [Parameter(Mandatory)][string[]] $Completions
+    )
+
+    $lines = @($Message, '', 'Try one of:')
+    $lines += $Completions | ForEach-Object { "  $_" }
+    return ($lines -join [Environment]::NewLine)
+}
+
+function New-WapIncompleteCommandMessage {
+    param(
+        [Parameter(Mandatory)][string] $CommandLine,
+        [Parameter(Mandatory)][string[]] $Completions
+    )
+
+    return New-WapCliSuggestionMessage -Message "Command is incomplete: $CommandLine" -Completions $Completions
+}
+
+function New-WapUnknownCommandMessage {
+    param(
+        [Parameter(Mandatory)][string] $CommandLine,
+        [Parameter(Mandatory)][string] $UnknownToken,
+        [Parameter(Mandatory)][string[]] $Completions
+    )
+
+    return New-WapCliSuggestionMessage -Message "Unknown command part '$UnknownToken' in: $CommandLine" -Completions $Completions
 }
 
 function Invoke-WapCli {
@@ -2218,7 +2982,19 @@ function Invoke-WapCli {
     switch ($Command) {
         'init' { Initialize-Wap $RepositoryRoot; return }
         'config' {
-            if (-not $argsList.Count) { throw 'Usage: .\wap.ps1 config show | config set <key> <value>' }
+            $configCompletions = @(
+                '.\wap.ps1 config show',
+                '.\wap.ps1 config set bootstrapConfigPath <path>',
+                '.\wap.ps1 config set configPath <path>',
+                '.\wap.ps1 config set workspaceRoot <path>',
+                '.\wap.ps1 config set profilesRoot <path>',
+                '.\wap.ps1 config set logging.enabled <true|false>',
+                '.\wap.ps1 config set logging.retentionDays <days>',
+                '.\wap.ps1 config set logging.root <path>'
+            )
+            if (Test-WapCliMissingToken -Arguments $argsList) {
+                throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 config' -Completions $configCompletions)
+            }
             switch ($argsList[0]) {
                 'show' {
                     if ($argsList.Count -ne 1) { throw 'Usage: .\wap.ps1 config show' }
@@ -2226,32 +3002,71 @@ function Invoke-WapCli {
                 }
                 'set' {
                     if ($argsList.Count -lt 3) {
-                        throw 'Usage: .\wap.ps1 config set <workspaceRoot|logging.enabled|logging.retentionDays> <value>'
+                        throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 config set' -Completions @(
+                            '.\wap.ps1 config set bootstrapConfigPath <path>',
+                            '.\wap.ps1 config set configPath <path>',
+                            '.\wap.ps1 config set workspaceRoot <path>',
+                            '.\wap.ps1 config set profilesRoot <path>',
+                            '.\wap.ps1 config set logging.enabled <true|false>',
+                            '.\wap.ps1 config set logging.retentionDays <days>',
+                            '.\wap.ps1 config set logging.root <path>'
+                        ))
                     }
                     $value = @($argsList[2..($argsList.Count - 1)]) -join ' '
                     Set-WapConfig -Key $argsList[1] -Value $value -RepositoryRoot $RepositoryRoot -WhatIf:$whatIf
                 }
-                default { throw "Unknown config command '$($argsList[0])'." }
+                default {
+                    throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 config' -UnknownToken ([string]$argsList[0]) -Completions $configCompletions)
+                }
             }
             return
         }
         'logs' {
-            if (-not $argsList.Count) { throw 'Usage: .\wap.ps1 logs cleanup [-WhatIf]' }
+            $logsCompletions = @('.\wap.ps1 logs cleanup [-WhatIf]')
+            if (Test-WapCliMissingToken -Arguments $argsList) {
+                throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 logs' -Completions $logsCompletions)
+            }
             switch ($argsList[0]) {
                 'cleanup' {
                     if ($argsList.Count -ne 1) { throw 'Usage: .\wap.ps1 logs cleanup [-WhatIf]' }
                     Remove-WapLogs -RepositoryRoot $RepositoryRoot -WhatIf:$whatIf
                 }
-                default { throw "Unknown logs command '$($argsList[0])'." }
+                default {
+                    throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 logs' -UnknownToken ([string]$argsList[0]) -Completions $logsCompletions)
+                }
             }
             return
         }
         'profile' {
-            if (-not $argsList.Count) { Show-WapHelp; throw 'Missing profile command.' }
+            $profileCompletions = @(
+                '.\wap.ps1 profile status',
+                '.\wap.ps1 profile list',
+                '.\wap.ps1 profile new <name>',
+                '.\wap.ps1 profile install <name>',
+                '.\wap.ps1 profile activate <name>',
+                '.\wap.ps1 profile deactivate <name>',
+                '.\wap.ps1 profile uninstall <name>',
+                '.\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all]',
+                '.\wap.ps1 profile delete <name>',
+                '.\wap.ps1 profile capture <add|list|remove|copy|edit|refresh|versions|select-version|merge> ...'
+            )
+            if (Test-WapCliMissingToken -Arguments $argsList) {
+                throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 profile' -Completions $profileCompletions)
+            }
             $action = $argsList[0]
             if ($action -eq 'capture') {
                 if ($argsList.Count -lt 3) {
-                    throw 'Usage: .\wap.ps1 profile capture <add|list|remove|copy|edit> ...'
+                    throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 profile capture' -Completions @(
+                        '.\wap.ps1 profile capture add <profile> <capture> [--id <id>] [--name <name>] [--description <text>]',
+                        '.\wap.ps1 profile capture list <profile>',
+                        '.\wap.ps1 profile capture remove <profile> <captureId> [-WhatIf]',
+                        '.\wap.ps1 profile capture copy <fromProfile> <captureId> <toProfile> [--id <id>] [--name <name>] [--description <text>]',
+                        '.\wap.ps1 profile capture edit <profile> <captureId> [--name <name>] [--description <text>]',
+                        '.\wap.ps1 profile capture refresh <profile> <captureId> <capture> [--description <text>] [--apply]',
+                        '.\wap.ps1 profile capture versions <profile> <captureId>',
+                        '.\wap.ps1 profile capture select-version <profile> <captureId> <base|latest|version>',
+                        '.\wap.ps1 profile capture merge <profile> <captureId> [--up-to <version>]'
+                    ))
                 }
                 $captureAction = $argsList[1]
                 switch ($captureAction) {
@@ -2296,12 +3111,52 @@ function Invoke-WapCli {
                             -DisplayName (Get-WapCliOption -Arguments $argsList -Name 'name') `
                             -Description (Get-WapCliOption -Arguments $argsList -Name 'description')
                     }
-                    default { throw "Unknown profile capture command '$captureAction'." }
+                    'refresh' {
+                        if ($argsList.Count -lt 5) {
+                            throw 'Usage: .\wap.ps1 profile capture refresh <profile> <captureId> <capture> [--description <text>] [--apply]'
+                        }
+                        Refresh-WapProfileCapture -ProfileName $argsList[2] `
+                            -CaptureId $argsList[3] `
+                            -CaptureName $argsList[4] `
+                            -RepositoryRoot $RepositoryRoot `
+                            -Description (Get-WapCliOption -Arguments $argsList -Name 'description') `
+                            -Apply:(Get-WapCliSwitch -Arguments $argsList -Name 'apply')
+                    }
+                    'versions' {
+                        if ($argsList.Count -ne 4) { throw 'Usage: .\wap.ps1 profile capture versions <profile> <captureId>' }
+                        Show-WapProfileCaptureVersions -ProfileName $argsList[2] -CaptureId $argsList[3] -RepositoryRoot $RepositoryRoot
+                    }
+                    'select-version' {
+                        if ($argsList.Count -ne 5) { throw 'Usage: .\wap.ps1 profile capture select-version <profile> <captureId> <base|latest|version>' }
+                        Select-WapProfileCaptureVersion -ProfileName $argsList[2] -CaptureId $argsList[3] -Version $argsList[4] -RepositoryRoot $RepositoryRoot
+                    }
+                    'merge' {
+                        if ($argsList.Count -lt 4) { throw 'Usage: .\wap.ps1 profile capture merge <profile> <captureId> [--up-to <version>]' }
+                        Merge-WapProfileCaptureVersions -ProfileName $argsList[2] `
+                            -CaptureId $argsList[3] `
+                            -RepositoryRoot $RepositoryRoot `
+                            -UpToVersion (Get-WapCliOption -Arguments $argsList -Name 'up-to')
+                    }
+                    default {
+                        throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 profile capture' -UnknownToken ([string]$captureAction) -Completions @(
+                            '.\wap.ps1 profile capture add <profile> <capture> [--id <id>] [--name <name>] [--description <text>]',
+                            '.\wap.ps1 profile capture list <profile>',
+                            '.\wap.ps1 profile capture remove <profile> <captureId> [-WhatIf]',
+                            '.\wap.ps1 profile capture copy <fromProfile> <captureId> <toProfile> [--id <id>] [--name <name>] [--description <text>]',
+                            '.\wap.ps1 profile capture edit <profile> <captureId> [--name <name>] [--description <text>]',
+                            '.\wap.ps1 profile capture refresh <profile> <captureId> <capture> [--description <text>] [--apply]',
+                            '.\wap.ps1 profile capture versions <profile> <captureId>',
+                            '.\wap.ps1 profile capture select-version <profile> <captureId> <base|latest|version>',
+                            '.\wap.ps1 profile capture merge <profile> <captureId> [--up-to <version>]'
+                        ))
+                    }
                 }
                 return
             }
             if ($action -in @('status', 'list')) { Show-WapStatus $RepositoryRoot; return }
-            if ($argsList.Count -lt 2) { throw "Missing profile name for '$action'." }
+            if ($argsList.Count -lt 2) {
+                throw (New-WapIncompleteCommandMessage -CommandLine ".\wap.ps1 profile $action" -Completions @(".\wap.ps1 profile $action <name>"))
+            }
             $name = $argsList[1]
             switch ($action) {
                 'install' { Install-WapProfile $name $RepositoryRoot -WhatIf:$whatIf }
@@ -2319,16 +3174,29 @@ function Invoke-WapCli {
                         -RemoveRegistry:($all -or (Get-WapCliSwitch -Arguments $argsList -Name 'registry')) `
                         -WhatIf:$whatIf
                 }
+                'new' { New-WapProfileDefinition $name $RepositoryRoot -WhatIf:$whatIf }
                 'activate' { Enable-WapProfile $name $RepositoryRoot -WhatIf:$whatIf }
                 'deactivate' { Disable-WapProfile $name $RepositoryRoot -WhatIf:$whatIf }
                 'delete' { Remove-WapProfileDefinition $name $RepositoryRoot -WhatIf:$whatIf }
-                default { throw "Unknown profile command '$action'." }
+                default {
+                    throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 profile' -UnknownToken ([string]$action) -Completions $profileCompletions)
+                }
             }
             return
         }
         'capture' {
-            if (-not $argsList.Count) {
-                throw 'Usage: .\wap.ps1 capture <list|new|start|rename|validate|diff|applyfilter|remove> ...'
+            $captureCompletions = @(
+                '.\wap.ps1 capture list',
+                '.\wap.ps1 capture new <name>',
+                '.\wap.ps1 capture start <name>',
+                '.\wap.ps1 capture rename <name> <newName>',
+                '.\wap.ps1 capture validate <name>',
+                '.\wap.ps1 capture diff <name>',
+                '.\wap.ps1 capture applyfilter <name>',
+                '.\wap.ps1 capture remove <name> [-WhatIf]'
+            )
+            if (Test-WapCliMissingToken -Arguments $argsList) {
+                throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 capture' -Completions $captureCompletions)
             }
             $captureAction = $argsList[0]
             switch ($captureAction) {
@@ -2364,11 +3232,14 @@ function Invoke-WapCli {
                     if ($argsList.Count -ne 2) { throw 'Usage: .\wap.ps1 capture remove <name> [-WhatIf]' }
                     Remove-WapCaptureSession $argsList[1] $RepositoryRoot -WhatIf:$whatIf
                 }
-                default { throw "Unknown capture command '$captureAction'." }
+                default {
+                    throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 capture' -UnknownToken ([string]$captureAction) -Completions $captureCompletions)
+                }
             }
             return
         }
         { $_ -in @('', 'help', '--help', '-h') } { Show-WapHelp; return }
+        { $_ -in @('examples', '--examples') } { Show-WapExamples -RepositoryRoot $RepositoryRoot; return }
         default { Show-WapHelp; throw "Unknown command '$Command'." }
     }
 }

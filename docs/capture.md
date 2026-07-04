@@ -6,7 +6,7 @@ delete anything, or generate MSIX packages.
 
 Version: 1.1
 
-Last updated: 2026-07-04T02:24:12Z
+Last updated: 2026-07-04T02:47:33Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 

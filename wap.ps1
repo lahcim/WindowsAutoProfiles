@@ -41,7 +41,12 @@ catch {
 }
 finally {
     try {
-        Invoke-WapLogRetentionCleanup -RepositoryRoot $PSScriptRoot
+        if ($log) {
+            Invoke-WapLogRetentionCleanup -RepositoryRoot $PSScriptRoot -Root $log.root -RetentionDays $log.retentionDays
+        }
+        else {
+            Invoke-WapLogRetentionCleanup -RepositoryRoot $PSScriptRoot
+        }
     }
     catch {
         Write-Warning "Log retention cleanup failed: $($_.Exception.Message)"

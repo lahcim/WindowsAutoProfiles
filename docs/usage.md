@@ -5,7 +5,7 @@ and expected command output.
 
 Version: 1.1
 
-Last updated: 2026-07-04T02:24:12Z
+Last updated: 2026-07-04T03:24:14Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -22,15 +22,22 @@ dispatching each command.
 
 ```text
 .\wap.ps1 init
+.\wap.ps1 --help
+.\wap.ps1 --examples
 .\wap.ps1 config show
+.\wap.ps1 config set bootstrapConfigPath <path> [-WhatIf]
+.\wap.ps1 config set configPath <path> [-WhatIf]
 .\wap.ps1 config set workspaceRoot <path> [-WhatIf]
+.\wap.ps1 config set profilesRoot <path> [-WhatIf]
 .\wap.ps1 config set logging.enabled <true|false> [-WhatIf]
 .\wap.ps1 config set logging.retentionDays <days> [-WhatIf]
+.\wap.ps1 config set logging.root <path> [-WhatIf]
 .\wap.ps1 logs cleanup [-WhatIf]
 
 .\wap.ps1 profile install <name> [-WhatIf]
 .\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]
 .\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all] [-WhatIf]
+.\wap.ps1 profile new <name> [-WhatIf]
 .\wap.ps1 profile activate <name> [-WhatIf]
 .\wap.ps1 profile deactivate <name> [-WhatIf]
 .\wap.ps1 profile delete <name> [-WhatIf]
@@ -42,6 +49,10 @@ dispatching each command.
 .\wap.ps1 profile capture remove <profile> <captureId> [-WhatIf]
 .\wap.ps1 profile capture copy <fromProfile> <captureId> <toProfile> [--id <id>] [--name <name>] [--description <text>]
 .\wap.ps1 profile capture edit <profile> <captureId> [--name <name>] [--description <text>]
+.\wap.ps1 profile capture refresh <profile> <captureId> <capture> [--description <text>] [--apply]
+.\wap.ps1 profile capture versions <profile> <captureId>
+.\wap.ps1 profile capture select-version <profile> <captureId> <base|latest|version>
+.\wap.ps1 profile capture merge <profile> <captureId> [--up-to <version>]
 
 .\wap.ps1 capture new <name>
 .\wap.ps1 capture start <name> [-WhatIf]
@@ -60,6 +71,27 @@ that invocation:
 .\wap.ps1 profile status --no-log
 ```
 
+Use `--examples` to print step-by-step populated scenarios from
+`docs\examples.md`:
+
+```powershell
+.\wap.ps1 --examples
+```
+
+The small bootstrap file `wap.config.json` points at the full settings file.
+By default it points to `wap.settings.json` beside the script, but it can be
+moved to OneDrive or another location:
+
+```powershell
+.\wap.ps1 config set configPath '%OneDrive%\WindowsAutoProfiles\wap.settings.json'
+.\wap.ps1 config set profilesRoot '%OneDrive%\WindowsAutoProfiles\profiles'
+.\wap.ps1 config set workspaceRoot '%USERPROFILE%\Workspaces'
+.\wap.ps1 config set logging.root '%LOCALAPPDATA%\WindowsAutoProfiles\Logs'
+```
+
+Quoted environment-variable tokens are stored literally in JSON and expanded
+when WAP runs.
+
 ## PowerShell and administrator requirements
 
 | Command area | Minimum PowerShell | Administrator required | Notes |
@@ -70,7 +102,7 @@ that invocation:
 | `profile uninstall/delete` | 5.1 | No by default | Preserves workspace data and captured registry keys unless explicit cleanup flags are used. Package uninstallers may prompt independently. |
 | `profile uninstall --remove-registry`, `profile cleanup --registry` | 5.1 | Only when HKLM keys are eligible | Tries Windows `sudo.exe` first for machine-wide HKLM registry cleanup; otherwise prints the exact elevated command. |
 | `capture start/list/rename/validate/diff/applyfilter/remove` | 5.1 | No on host | `capture start` launches Sandbox and generates scripts. |
-| `logs cleanup` | 5.1 | No | Removes generated `.logs\*.log` files except the current command log. |
+| `logs cleanup` | 5.1 | No | Removes generated command logs from `logging.root` except the current command log. |
 | `Capture-Baseline.ps1` inside Sandbox | 5.1 | Yes | Tries `sudo.exe` first when not elevated; otherwise prints the exact elevated command. |
 | `Capture-Finalize.ps1` inside Sandbox | 5.1 | Yes | Tries `sudo.exe` first when not elevated; otherwise prints the exact elevated command. |
 
@@ -85,13 +117,24 @@ Run that command from an elevated PowerShell session inside Sandbox.
 
 ## Configuration
 
-`wap.config.json` controls where workspaces are created on the local machine.
-It also controls command logging.
+`wap.config.json` is a small bootstrap file that points to the full settings
+file. By default, it points to `wap.settings.json` beside `wap.ps1`.
+
+```json
+{
+  "version": 1,
+  "configPath": "wap.settings.json"
+}
+```
+
+`wap.settings.json` controls where workspaces are created, where profile
+definitions are stored, and how command logging behaves.
 
 ```json
 {
   "version": 1,
   "workspaceRoot": "%USERPROFILE%\\Workspaces",
+  "profilesRoot": "profiles",
   "logging": {
     "enabled": true,
     "retentionDays": 30
@@ -119,7 +162,8 @@ WindowsAutoProfiles initialized at 'C:\src\WindowsAutoProfiles'.
 ```
 
 `init` creates `wap.config.json` only when it is absent. It does not overwrite
-existing configuration.
+existing configuration. It also creates `wap.settings.json` when that file is
+absent.
 
 ### Show configuration
 
@@ -130,11 +174,25 @@ existing configuration.
 Example output:
 
 ```text
-Config path: C:\src\WindowsAutoProfiles\wap.config.json
-workspaceRoot: C:\Users\me\Workspaces
-LoggingEnabled: True
-LoggingRetentionDays: 30
-LogRoot: C:\src\WindowsAutoProfiles\.logs
+Configurable settings (use ".\wap.ps1 config set <key> <value>" on these keys only):
+
+version               : 1
+bootstrapConfigPath   : <local wap.config.json>
+configPath            : wap.settings.json
+workspaceRoot         : %USERPROFILE%\Workspaces
+profilesRoot          : profiles
+logging.enabled       : True
+logging.retentionDays : 30
+logging.root          : .logs
+
+Dynamic resolved settings (read-only; computed at runtime from the configurable settings above):
+
+local.bootstrapConfigPath    : C:\src\WindowsAutoProfiles\wap.config.json
+resolved.bootstrapConfigPath : C:\src\WindowsAutoProfiles\wap.config.json
+resolved.configPath          : C:\src\WindowsAutoProfiles\wap.settings.json
+resolved.workspaceRoot       : C:\Users\me\Workspaces
+resolved.profilesRoot        : C:\src\WindowsAutoProfiles\profiles
+resolved.logging.root        : C:\src\WindowsAutoProfiles\.logs
 ```
 
 ### Set workspace root
@@ -143,17 +201,32 @@ LogRoot: C:\src\WindowsAutoProfiles\.logs
 .\wap.ps1 config set workspaceRoot C:\Workspaces
 ```
 
+Set the root where profile definitions and attached captures are stored:
+
+```powershell
+.\wap.ps1 config set profilesRoot '%OneDrive%\WindowsAutoProfiles\profiles'
+```
+
 ### Configure logging
 
-Command logging is enabled by default. Logs are written under `.logs\` with a
-UTC timestamp in the file name. Failed commands print the log path so users can
-attach the file to a GitHub issue.
+Command logging is enabled by default. Logs are written under `logging.root`
+(`.logs\` by default) with a UTC timestamp in the file name. Failed commands
+print the log path so users can attach the file to a GitHub issue.
 
 Disable generated logs globally:
 
 ```powershell
 .\wap.ps1 config set logging.enabled false
 ```
+
+Move generated logs to another directory:
+
+```powershell
+.\wap.ps1 config set logging.root '%LOCALAPPDATA%\WindowsAutoProfiles\Logs'
+```
+
+If the directory does not exist, `config set` warns but does not create it. WAP
+creates the directory when logging starts on the next command execution.
 
 Enable logs again:
 
@@ -199,7 +272,7 @@ Use `-WhatIf` to preview:
 
 ## Profile schema
 
-Profiles live under `profiles\<name>\profile.yaml`.
+Profiles live under `<profilesRoot>\<name>\profile.yaml`.
 
 Example:
 
@@ -241,6 +314,32 @@ Supported substitutions:
 Normal Windows `%ENVIRONMENT_VARIABLE%` references are also expanded.
 
 ## Profile lifecycle
+
+### Create an empty profile definition
+
+```powershell
+.\wap.ps1 profile new developer
+```
+
+The command creates `<profilesRoot>\developer\profile.yaml` with a minimal
+editable profile:
+
+```yaml
+name: developer
+apps:
+  # - id: Git.Git
+env:
+  WAP_PROFILE: developer
+path:
+  # - ${profileRoot}\Apps\bin
+projects: ${profileRoot}\Projects
+data: ${profileRoot}\Data
+downloads: ${profileRoot}\Downloads
+cache: ${profileRoot}\Cache
+shortcuts:
+  # - name: Example
+  #   target: ${profileRoot}\Apps\Example.exe
+```
 
 ### Install a profile
 
@@ -406,7 +505,7 @@ Preview destructive cleanup first:
 .\wap.ps1 profile delete developer
 ```
 
-`profile delete` removes `profiles\<name>\` only when the profile is not
+`profile delete` removes `<profilesRoot>\<name>\` only when the profile is not
 installed. It preserves workspace data and `.capture` history.
 
 ### Show profile status
@@ -598,6 +697,26 @@ Edit metadata:
 .\wap.ps1 profile capture edit electronics kicad --name "KiCad 10" --description "KiCad 10 per-user install and shortcuts"
 ```
 
+Refresh an attached capture from a newer standalone capture:
+
+```powershell
+.\wap.ps1 profile capture refresh electronics kicad kicad-refresh --description "KiCad 10.0.1 update" --apply
+```
+
+List and select capture versions:
+
+```powershell
+.\wap.ps1 profile capture versions electronics kicad
+.\wap.ps1 profile capture select-version electronics kicad base
+.\wap.ps1 profile capture select-version electronics kicad latest
+```
+
+Merge a known-good selected version into the base manifest:
+
+```powershell
+.\wap.ps1 profile capture merge electronics kicad
+```
+
 Copy a capture to another profile:
 
 ```powershell
@@ -612,6 +731,9 @@ Remove a capture from a profile:
 
 This removes only the attached copy under `profiles\<profile>\captures\<id>\`.
 It does not delete the standalone `.capture\<name>\` session.
+
+See [Capture refresh and versioning](capture-versioning.md) for the full model
+and reliability notes.
 
 ## Legacy package-list capture
 

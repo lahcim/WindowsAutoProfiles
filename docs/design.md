@@ -6,7 +6,7 @@ Windows Sandbox capture workflow.
 
 Version: 1.1
 
-Last updated: 2026-07-04T02:24:12Z
+Last updated: 2026-07-04T02:56:40Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -24,8 +24,8 @@ Author: Michal Zygmunt <lahcim@fajne.com>
 ```text
 wap.ps1                         CLI entry point
 src\WindowsAutoProfiles.psm1    PowerShell module
-profiles\<name>\profile.yaml    Profile definitions
-profiles\<name>\captures\       Profile-attached capture manifests
+<profilesRoot>\<name>\profile.yaml    Profile definitions
+<profilesRoot>\<name>\captures\       Profile-attached capture manifests
 templates\capture\              Sandbox scripts and filter rules
 docs\                           Documentation
 tests\                          Pester tests
@@ -40,18 +40,31 @@ Runtime state is local and ignored by Git:
 
 ## Path model
 
-`wap.config.json` is the single authority for workspace placement on the local
-machine.
+`wap.config.json` is a small bootstrap file that points to the full settings
+file. `wap.settings.json` is the default full settings file.
 
 ```json
 {
   "version": 1,
-  "workspaceRoot": "%USERPROFILE%\\Workspaces"
+  "configPath": "wap.settings.json"
 }
 ```
 
-WAP expands environment variables, validates that the resolved path is
-absolute, and derives:
+The full settings file controls workspace placement and profile-definition
+storage:
+
+```json
+{
+  "version": 1,
+  "workspaceRoot": "%USERPROFILE%\\Workspaces",
+  "profilesRoot": "%OneDrive%\\WindowsAutoProfiles\\profiles"
+}
+```
+
+WAP stores environment-variable tokens literally in JSON and expands them at
+runtime. `workspaceRoot` must resolve to an absolute path. `profilesRoot` can
+be absolute or relative to the full config file directory. For each installed
+profile, WAP derives:
 
 ```text
 profileRoot = <workspaceRoot>\<profileName>
@@ -152,7 +165,7 @@ Registry cleanup removes only attached-capture registry keys recorded as
 
 ### Delete
 
-`profile delete` removes the profile definition under `profiles\<name>\` only
+`profile delete` removes the profile definition under `<profilesRoot>\<name>\` only
 when the profile is not installed. It does not delete workspace data or capture
 history.
 

@@ -76,10 +76,49 @@ shortcuts:
 }
 
 Describe 'state, init, and capture' {
+    It 'shows help and examples from the external examples file' {
+        $repo = Join-Path $TestDrive 'help-examples'
+        New-Item -ItemType Directory -Path (Join-Path $repo 'docs') -Force | Out-Null
+        'External example content with .\wap.ps1 init' | Set-Content -LiteralPath (Join-Path $repo 'docs\examples.md')
+
+        $help = (Invoke-WapCli -Command '--help' -Arguments @() -RepositoryRoot $repo *>&1 | Out-String)
+        $examples = (Invoke-WapCli -Command '--examples' -Arguments @() -RepositoryRoot $repo *>&1 | Out-String)
+
+        $help | Should Match '--examples'
+        $examples | Should Match 'External example content'
+        $examples | Should Match ([regex]::Escape('.\wap.ps1 init'))
+    }
+
+    It 'reports incomplete commands with suggested completions' {
+        $repo = Join-Path $TestDrive 'incomplete-commands'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+
+        $message = $null
+        try { Invoke-WapCli -Command config -Arguments @('') -RepositoryRoot $repo }
+        catch { $message = $_.Exception.Message }
+        $message | Should Match 'Command is incomplete'
+        $message | Should Match ([regex]::Escape('.\wap.ps1 config show'))
+        $message | Should Match ([regex]::Escape('.\wap.ps1 config set profilesRoot <path>'))
+
+        $message = $null
+        try { Invoke-WapCli -Command config -Arguments @('set') -RepositoryRoot $repo }
+        catch { $message = $_.Exception.Message }
+        $message | Should Match 'Command is incomplete'
+        $message | Should Match ([regex]::Escape('.\wap.ps1 config set configPath <path>'))
+
+        $message = $null
+        try { Invoke-WapCli -Command capture -Arguments @() -RepositoryRoot $repo }
+        catch { $message = $_.Exception.Message }
+        $message | Should Match 'Command is incomplete'
+        $message | Should Match ([regex]::Escape('.\wap.ps1 capture start <name>'))
+    }
+
     It 'initializes config and state idempotently without overwriting config' {
         $repo = Join-Path $TestDrive 'init'
         New-Item -ItemType Directory -Path $repo | Out-Null
         Initialize-Wap -RepositoryRoot $repo
+        (Join-Path $repo 'wap.config.json') | Should Exist
+        (Join-Path $repo 'wap.settings.json') | Should Exist
         $customRoot = Join-Path $TestDrive 'custom-workspaces'
         Write-TestConfig -RepositoryRoot $repo -WorkspaceRoot $customRoot
         Initialize-Wap -RepositoryRoot $repo
@@ -89,6 +128,91 @@ Describe 'state, init, and capture' {
         $state.profiles.Count | Should Be 0
         $state.registry.enabled | Should Be $false
         $config.workspaceRoot | Should Be $customRoot
+    }
+
+    It 'supports an external full config and external profilesRoot with runtime environment expansion' {
+        $repo = Join-Path $TestDrive 'external-config'
+        $configDirectory = Join-Path $TestDrive 'external-config-store'
+        $workspace = Join-Path $TestDrive 'external-workspaces'
+        $profiles = Join-Path $TestDrive 'external-profiles'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo
+        [Environment]::SetEnvironmentVariable('WAP_TEST_CONFIG_DIR', $configDirectory, 'Process')
+        [Environment]::SetEnvironmentVariable('WAP_TEST_WORKSPACES', $workspace, 'Process')
+        [Environment]::SetEnvironmentVariable('WAP_TEST_PROFILES', $profiles, 'Process')
+
+        try {
+            Invoke-WapCli -Command config -Arguments @('set', 'configPath', '%WAP_TEST_CONFIG_DIR%\wap.full.json') -RepositoryRoot $repo
+            Invoke-WapCli -Command config -Arguments @('set', 'workspaceRoot', '%WAP_TEST_WORKSPACES%') -RepositoryRoot $repo
+            Invoke-WapCli -Command config -Arguments @('set', 'profilesRoot', '%WAP_TEST_PROFILES%') -RepositoryRoot $repo
+
+            $fullConfigPath = Join-Path $configDirectory 'wap.full.json'
+            $bootstrap = Get-Content -LiteralPath (Join-Path $repo 'wap.config.json') -Raw | ConvertFrom-Json
+            $rawFullConfig = Get-Content -LiteralPath $fullConfigPath -Raw | ConvertFrom-Json
+            $config = Get-WapConfig -RepositoryRoot $repo
+
+            $bootstrap.configPath | Should Be '%WAP_TEST_CONFIG_DIR%\wap.full.json'
+            $rawFullConfig.workspaceRoot | Should Be '%WAP_TEST_WORKSPACES%'
+            $rawFullConfig.profilesRoot | Should Be '%WAP_TEST_PROFILES%'
+            $config.source | Should Be $fullConfigPath
+            $config.workspaceRoot | Should Be $workspace
+            $config.profilesRoot | Should Be $profiles
+
+            New-Item -ItemType Directory -Path (Join-Path $profiles 'cloud') -Force | Out-Null
+            @('name: cloud', 'apps:') | Set-Content -LiteralPath (Join-Path $profiles 'cloud\profile.yaml')
+            $profile = Import-WapProfile -Name cloud -RepositoryRoot $repo
+            $profile.profileRoot | Should Be ([IO.Path]::Combine($workspace, 'cloud'))
+        }
+        finally {
+            [Environment]::SetEnvironmentVariable('WAP_TEST_CONFIG_DIR', $null, 'Process')
+            [Environment]::SetEnvironmentVariable('WAP_TEST_WORKSPACES', $null, 'Process')
+            [Environment]::SetEnvironmentVariable('WAP_TEST_PROFILES', $null, 'Process')
+        }
+    }
+
+    It 'supports configurable bootstrap and logging roots with runtime environment expansion' {
+        $repo = Join-Path $TestDrive 'bootstrap-log-root'
+        $bootstrapDirectory = Join-Path $TestDrive 'bootstrap-store'
+        $settingsDirectory = Join-Path $TestDrive 'settings-store'
+        $logsDirectory = Join-Path $TestDrive 'custom-logs'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo
+        [Environment]::SetEnvironmentVariable('WAP_TEST_BOOTSTRAP_DIR', $bootstrapDirectory, 'Process')
+        [Environment]::SetEnvironmentVariable('WAP_TEST_SETTINGS_DIR', $settingsDirectory, 'Process')
+        [Environment]::SetEnvironmentVariable('WAP_TEST_LOGS_DIR', $logsDirectory, 'Process')
+
+        try {
+            Invoke-WapCli -Command config -Arguments @('set', 'bootstrapConfigPath', '%WAP_TEST_BOOTSTRAP_DIR%\wap.bootstrap.json') -RepositoryRoot $repo
+            Invoke-WapCli -Command config -Arguments @('set', 'configPath', '%WAP_TEST_SETTINGS_DIR%\wap.settings.json') -RepositoryRoot $repo
+            Invoke-WapCli -Command config -Arguments @('set', 'logging.root', '%WAP_TEST_LOGS_DIR%') -RepositoryRoot $repo
+
+            $localBootstrap = Get-Content -LiteralPath (Join-Path $repo 'wap.config.json') -Raw | ConvertFrom-Json
+            $externalBootstrapPath = Join-Path $bootstrapDirectory 'wap.bootstrap.json'
+            $externalBootstrap = Get-Content -LiteralPath $externalBootstrapPath -Raw | ConvertFrom-Json
+            $fullConfigPath = Join-Path $settingsDirectory 'wap.settings.json'
+            $rawFullConfig = Get-Content -LiteralPath $fullConfigPath -Raw | ConvertFrom-Json
+            $config = Get-WapConfig -RepositoryRoot $repo
+            $shown = Show-WapConfig -RepositoryRoot $repo | Out-String
+
+            $localBootstrap.bootstrapConfigPath | Should Be '%WAP_TEST_BOOTSTRAP_DIR%\wap.bootstrap.json'
+            $externalBootstrap.configPath | Should Be '%WAP_TEST_SETTINGS_DIR%\wap.settings.json'
+            $rawFullConfig.logging.root | Should Be '%WAP_TEST_LOGS_DIR%'
+            $config.localBootstrap | Should Be (Join-Path $repo 'wap.config.json')
+            $config.bootstrap | Should Be $externalBootstrapPath
+            $config.source | Should Be $fullConfigPath
+            $config.logRoot | Should Be $logsDirectory
+            Test-Path -LiteralPath $logsDirectory -PathType Container | Should Be $false
+            $shown | Should Match 'bootstrapConfigPath'
+            $shown | Should Match 'logging\.root'
+            $shown | Should Not Match 'LoggingRoot'
+            $shown | Should Match 'resolved\.bootstrapConfigPath'
+            $shown | Should Match 'resolved\.logging\.root'
+        }
+        finally {
+            [Environment]::SetEnvironmentVariable('WAP_TEST_BOOTSTRAP_DIR', $null, 'Process')
+            [Environment]::SetEnvironmentVariable('WAP_TEST_SETTINGS_DIR', $null, 'Process')
+            [Environment]::SetEnvironmentVariable('WAP_TEST_LOGS_DIR', $null, 'Process')
+        }
     }
 
     It 'shows and sets workspaceRoot through the CLI' {
@@ -103,6 +227,24 @@ Describe 'state, init, and capture' {
 
         $config.workspaceRoot | Should Be $newRoot
         $shown | Should Match ([regex]::Escape($newRoot))
+        $shown | Should Match 'Configurable settings'
+        $shown | Should Match 'Dynamic resolved settings'
+        $shown | Should Match 'resolved\.workspaceRoot'
+    }
+
+    It 'rejects attempts to set dynamic resolved configuration values with guidance' {
+        $repo = Join-Path $TestDrive 'resolved-config-key'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo
+
+        $message = $null
+        try {
+            Invoke-WapCli -Command config -Arguments @('set', 'ResolvedConfigPath', '%USERPROFILE%\settings.json') -RepositoryRoot $repo
+        }
+        catch { $message = $_.Exception.Message }
+
+        $message | Should Match 'dynamic and read-only'
+        $message | Should Match "Set 'configPath' instead"
     }
 
     It 'shows and sets logging configuration through the CLI' {
@@ -117,8 +259,8 @@ Describe 'state, init, and capture' {
 
         $config.loggingEnabled | Should Be $false
         $config.loggingRetentionDays | Should Be 0
-        $shown | Should Match 'LoggingEnabled\s+:\s+False'
-        $shown | Should Match 'LoggingRetentionDays\s+:\s+0'
+        $shown | Should Match 'logging\.enabled\s+:\s+False'
+        $shown | Should Match 'logging\.retentionDays\s+:\s+0'
     }
 
     It 'cleans generated logs while keeping the current command log' {
@@ -156,6 +298,7 @@ Describe 'state, init, and capture' {
     It 'creates a portable capture without requiring winget' {
         $repo = Join-Path $TestDrive 'capture'
         New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo
         Mock Get-Command { $null } -ParameterFilter { $Name -eq 'winget' } -ModuleName WindowsAutoProfiles
         New-WapCapture -Name fresh -RepositoryRoot $repo
         $path = Join-Path $repo 'profiles/fresh/profile.yaml'
@@ -164,6 +307,30 @@ Describe 'state, init, and capture' {
         $yaml | Should Match 'name: fresh'
         $yaml | Should Match '\$\{profileRoot\}\\Apps\\bin'
         $yaml | Should Not Match '^[A-Za-z]:\\'
+    }
+
+    It 'creates an empty placeholder profile under the configured profilesRoot' {
+        $repo = Join-Path $TestDrive 'profile-new'
+        $profiles = Join-Path $TestDrive 'profile-new-definitions'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo
+        Invoke-WapCli -Command config -Arguments @('set', 'profilesRoot', $profiles) -RepositoryRoot $repo
+
+        Invoke-WapCli -Command profile -Arguments @('new', 'developer') -RepositoryRoot $repo
+        $profilePath = Join-Path $profiles 'developer\profile.yaml'
+        $profilePath | Should Exist
+        $yaml = Get-Content -LiteralPath $profilePath -Raw
+        $yaml | Should Match 'name: developer'
+        $yaml | Should Match 'apps:'
+        $yaml | Should Match 'env:'
+        $yaml | Should Match 'path:'
+        $yaml | Should Match '\$\{profileRoot\}\\Projects'
+
+        $profile = Import-WapProfile -Name developer -RepositoryRoot $repo
+        $profile.name | Should Be 'developer'
+
+        Invoke-WapCli -Command profile -Arguments @('new', 'designer', '-WhatIf') -RepositoryRoot $repo
+        (Join-Path $profiles 'designer\profile.yaml') | Should Not Exist
     }
 }
 
@@ -402,6 +569,8 @@ Describe 'interactive Windows Sandbox capture' {
 
     It 'attaches, lists, edits, copies, and removes profile captures' {
         $repo = Join-Path $TestDrive 'profile-captures'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        Initialize-Wap -RepositoryRoot $repo
         New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/dev'), (Join-Path $repo 'profiles/ops'), (Join-Path $repo '.capture/electronics/output') -Force | Out-Null
         @('name: dev', 'apps:') | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml')
         @('name: ops', 'apps:') | Set-Content -LiteralPath (Join-Path $repo 'profiles/ops/profile.yaml')
@@ -447,6 +616,56 @@ Describe 'interactive Windows Sandbox capture' {
         $metadata.name | Should Be 'KiCad 10'
         $metadata.description | Should Be 'Updated'
         $metadata.PSObject.Properties['updatedAt'] | Should Not Be $null
+
+        New-Item -ItemType Directory -Path (Join-Path $repo '.capture/electronics-refresh/output') -Force | Out-Null
+        [ordered]@{
+            version = 1
+            profileName = 'electronics-refresh'
+            capturedAt = '2026-01-02T00:05:00Z'
+            safety = [ordered]@{
+                destructiveActionsPerformed = $false
+                registryDeletionPerformed = $false
+                msixGenerated = $false
+            }
+            addedFiles = @(
+                [ordered]@{ scope = 'AppDataLocal'; path = 'C:\Users\WDAGUtilityAccount\AppData\Local\Tool\tool.exe' },
+                [ordered]@{ scope = 'AppDataLocal'; path = 'C:\Users\WDAGUtilityAccount\AppData\Local\Tool\new-version.dll' }
+            )
+            changedRegistryKeys = @(
+                [ordered]@{ change = 'Added'; hive = 'HKCU'; key = 'HKEY_CURRENT_USER\Software\Tool\NewVersion' }
+            )
+            newServices = @()
+            newShortcuts = @()
+            suspectedUninstallCommands = @()
+        } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $repo '.capture/electronics-refresh/output/capture-manifest.json') -Encoding UTF8
+
+        Invoke-WapCli -Command profile -Arguments @('capture', 'refresh', 'dev', 'kicad', 'electronics-refresh', '--description', 'Tool update', '--apply') -RepositoryRoot $repo
+        $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+        $metadata.selectedVersion | Should Be 'v0001'
+        @($metadata.versions).Count | Should Be 1
+        $deltaPath = Join-Path $repo 'profiles/dev/captures/kicad/versions/v0001/capture-delta.json'
+        $deltaPath | Should Exist
+        $delta = Get-Content -LiteralPath $deltaPath -Raw | ConvertFrom-Json
+        @($delta.addedFiles).Count | Should Be 1
+        @($delta.changedRegistryKeys).Count | Should Be 1
+
+        $versionsOutput = (Invoke-WapCli -Command profile -Arguments @('capture', 'versions', 'dev', 'kicad') -RepositoryRoot $repo *>&1 | Out-String)
+        $versionsOutput | Should Match 'Selected version:\s+v0001'
+        $versionsOutput | Should Match 'Tool update'
+
+        Invoke-WapCli -Command profile -Arguments @('capture', 'select-version', 'dev', 'kicad', 'base') -RepositoryRoot $repo
+        $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+        $metadata.selectedVersion | Should Be 'base'
+        Invoke-WapCli -Command profile -Arguments @('capture', 'select-version', 'dev', 'kicad', 'latest') -RepositoryRoot $repo
+        $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+        $metadata.selectedVersion | Should Be 'v0001'
+
+        Invoke-WapCli -Command profile -Arguments @('capture', 'merge', 'dev', 'kicad') -RepositoryRoot $repo
+        $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+        $mergedManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $metadata.selectedVersion | Should Be 'base'
+        @($metadata.versions).Count | Should Be 0
+        @($mergedManifest.addedFiles | Where-Object { $_.path -like '*new-version.dll' }).Count | Should Be 1
 
         Invoke-WapCli -Command profile -Arguments @('capture', 'copy', 'dev', 'kicad', 'ops', '--id', 'kicad-copy') -RepositoryRoot $repo
         $copyMetadataPath = Join-Path $repo 'profiles/ops/captures/kicad-copy/metadata.json'
