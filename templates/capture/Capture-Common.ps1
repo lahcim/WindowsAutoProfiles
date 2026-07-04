@@ -290,6 +290,52 @@ function Write-SystemSnapshot {
         Set-Content -LiteralPath (Join-Path $Destination 'scheduled-tasks.json') -Encoding UTF8
     Write-Progress -Id 4 -Activity 'Capturing services and scheduled tasks' -Completed
 }
+
+function Get-CaptureWingetPackages {
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $winget) { return @() }
+
+    $exportPath = Join-Path ([IO.Path]::GetTempPath()) "wap-capture-winget-$([guid]::NewGuid()).json"
+    try {
+        & $winget.Source export --output $exportPath --accept-source-agreements 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exportPath -PathType Leaf)) {
+            Write-Warning "winget export failed during capture snapshot; package delta will be empty."
+            return @()
+        }
+
+        $export = Get-Content -LiteralPath $exportPath -Raw | ConvertFrom-Json
+        $packages = [System.Collections.ArrayList]::new()
+        foreach ($source in @($export.Sources)) {
+            $sourceName = 'winget'
+            if ($source.PSObject.Properties['SourceDetails'] -and
+                $source.SourceDetails.PSObject.Properties['Name'] -and
+                -not [string]::IsNullOrWhiteSpace([string]$source.SourceDetails.Name)) {
+                $sourceName = [string]$source.SourceDetails.Name
+            }
+            foreach ($package in @($source.Packages)) {
+                if ($package.PSObject.Properties['PackageIdentifier'] -and
+                    -not [string]::IsNullOrWhiteSpace([string]$package.PackageIdentifier)) {
+                    [void]$packages.Add([pscustomobject]@{
+                        id = [string]$package.PackageIdentifier
+                        source = $sourceName
+                    })
+                }
+            }
+        }
+
+        return @($packages.ToArray() | Sort-Object id, source -Unique)
+    }
+    catch {
+        Write-Warning "winget export could not be parsed during capture snapshot; package delta will be empty. $($_.Exception.Message)"
+        return @()
+    }
+    finally {
+        if (Test-Path -LiteralPath $exportPath -PathType Leaf) {
+            Remove-Item -LiteralPath $exportPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Write-CaptureSnapshot {
     param([Parameter(Mandatory)][string] $Destination)
 
@@ -304,6 +350,11 @@ function Write-CaptureSnapshot {
         Write-Progress -Id 1 -Activity 'WindowsAutoProfiles capture snapshot' -Status 'Recording services and scheduled tasks' -PercentComplete 70
         Write-Host "Recording services and scheduled tasks..."
         Write-SystemSnapshot -Destination $Destination
+        Write-Progress -Id 1 -Activity 'WindowsAutoProfiles capture snapshot' -Status 'Recording winget packages' -PercentComplete 85
+        Write-Host "Recording winget packages..."
+        $wingetPackages = @(Get-CaptureWingetPackages)
+        ConvertTo-CaptureJsonArray -Items $wingetPackages -Depth 5 |
+            Set-Content -LiteralPath (Join-Path $Destination 'winget-packages.json') -Encoding UTF8
         Write-Progress -Id 1 -Activity 'WindowsAutoProfiles capture snapshot' -Status 'Writing snapshot metadata' -PercentComplete 95
         [pscustomobject]@{
             capturedAt = (Get-Date).ToUniversalTime().ToString('o')

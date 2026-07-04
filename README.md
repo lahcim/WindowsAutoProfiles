@@ -1,19 +1,21 @@
 # WindowsAutoProfiles
 
-WindowsAutoProfiles (WAP) is a PowerShell tool for creating repeatable Windows
-workspaces from versioned YAML profiles.
+WindowsAutoProfiles (WAP) is a PowerShell wrapper around WinGet that organizes
+packages into versioned Windows app profiles. Profiles can also include explicit
+captures for applications installed outside WinGet and for custom user
+configuration discovered in Windows Sandbox.
 
 Version: 1.1
 
-Last updated: 2026-07-04T05:14:31Z
+Last updated: 2026-07-04T05:18:20Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
-Use it to describe a workspace once, then recreate its folders, WinGet
-packages, shortcuts, user environment variables, and profile-specific `PATH`
-entries on a Windows machine. WAP also includes an optional Windows Sandbox
-capture workflow for observing interactive installers and attaching the
-resulting evidence to profiles.
+Use it to describe a Windows app profile once, then recreate its WinGet
+packages, folders, shortcuts, user environment variables, and profile-specific
+`PATH` entries on a Windows machine. WAP also includes a Windows Sandbox capture
+workflow for explicitly recording non-WinGet installers and configuration
+changes, then attaching that captured evidence to profiles.
 
 ## Why use WAP?
 
@@ -24,14 +26,17 @@ reviewed, rebuilt, switched, and cleaned up predictably.
 
 WAP is designed around a few principles:
 
+- **WinGet is the default package layer.** Profiles list intentional WinGet
+  packages explicitly instead of inferring all packages from a machine.
 - **Profiles are portable.** Profile YAML uses placeholders such as
   `${profileRoot}` and `${sharedRoot}` instead of hard-coded machine paths.
 - **User data is preserved.** Uninstall removes WAP-owned shortcuts and package
   ownership state, but it does not delete workspace directories.
 - **Activation is reversible.** WAP records the user environment changes it
   applies and restores only those values during deactivation.
-- **Capture is evidence, not installation.** Sandbox capture records what
-  changed; it does not apply captured changes to the host.
+- **Capture is explicit evidence.** Sandbox capture records non-WinGet
+  installers and custom configuration changes; it does not infer packages from
+  the host or apply captured changes to the host.
 
 ## Requirements
 

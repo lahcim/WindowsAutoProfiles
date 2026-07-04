@@ -181,6 +181,18 @@ foreach ($entry in $uniqueUninstallCommands) {
     }
 }
 
+$baselineWingetPackages = @(Read-CaptureJsonItems -Path (Join-Path $baseline 'winget-packages.json'))
+$afterWingetPackages = @(Read-CaptureJsonItems -Path (Join-Path $after 'winget-packages.json'))
+$baselineWingetKeys = @{}
+foreach ($package in $baselineWingetPackages) {
+    $source = if ($package.PSObject.Properties['source'] -and $package.source) { [string]$package.source } else { 'winget' }
+    $baselineWingetKeys["$(([string]$package.id).ToLowerInvariant())|$($source.ToLowerInvariant())"] = $true
+}
+$newWingetPackages = @($afterWingetPackages | Where-Object {
+    $source = if ($_.PSObject.Properties['source'] -and $_.source) { [string]$_.source } else { 'winget' }
+    -not $baselineWingetKeys.ContainsKey("$(([string]$_.id).ToLowerInvariant())|$($source.ToLowerInvariant())")
+} | Sort-Object id, source -Unique)
+
 Write-Progress -Id 11 -Activity 'Computing capture diff' -Status 'Writing manifest' -PercentComplete 95
 $manifest = [ordered]@{
     version = 1
@@ -206,6 +218,7 @@ $manifest = [ordered]@{
     filteredRegistryKeys = @($filteredRegistryKeys.ToArray())
     newServices = @($newServices)
     newScheduledTasks = @($newScheduledTasks)
+    newWingetPackages = @($newWingetPackages)
     newShortcuts = @($newShortcuts)
     suspectedUninstallCommands = @($keptUninstallCommands.ToArray())
     filteredUninstallCommands = @($filteredUninstallCommands.ToArray())
@@ -221,6 +234,7 @@ Write-Host "Filtered file noise:         $($filteredAddedFiles.Count)"
 Write-Host "Changed registry keys:       $($changedRegistryKeys.Count)"
 Write-Host "Filtered registry noise:     $($filteredRegistryKeys.Count)"
 Write-Host "New services:                $($newServices.Count)"
+Write-Host "New winget packages:         $($newWingetPackages.Count)"
 Write-Host "New shortcuts:               $($newShortcuts.Count)"
 Write-Host "Suspected uninstall commands: $($keptUninstallCommands.Count)"
 Write-Host "Filtered uninstall noise:    $($filteredUninstallCommands.Count)"

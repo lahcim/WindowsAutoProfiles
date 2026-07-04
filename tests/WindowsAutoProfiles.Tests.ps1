@@ -362,6 +362,8 @@ Describe 'state, init, and capture' {
         $path | Should Exist
         $yaml = Get-Content $path -Raw
         $yaml | Should Match 'name: fresh'
+        $yaml | Should Match 'profile winget add <profile> <packageId>'
+        $yaml | Should Not Match 'Git\.Git'
         $yaml | Should Match '\$\{profileRoot\}\\Apps\\bin'
         $yaml | Should Not Match '^[A-Za-z]:\\'
     }
@@ -719,6 +721,7 @@ Describe 'interactive Windows Sandbox capture' {
             addedFiles = @([ordered]@{ scope = 'AppDataLocal'; path = 'C:\Users\WDAGUtilityAccount\AppData\Local\Tool\tool.exe' })
             changedRegistryKeys = @()
             newServices = @()
+            newWingetPackages = @([ordered]@{ id = 'KiCad.KiCad'; source = 'winget' })
             newShortcuts = @()
             suspectedUninstallCommands = @()
         } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $repo '.capture/electronics/output/capture-manifest.json') -Encoding UTF8
@@ -738,6 +741,11 @@ Describe 'interactive Windows Sandbox capture' {
         $profileYaml | Should Match 'captures:'
         $profileYaml | Should Match 'id: kicad'
         $profileYaml | Should Match 'enabled: true'
+        $profile = Import-WapProfile -Name dev -RepositoryRoot $repo
+        @($profile.apps).Count | Should Be 1
+        $profile.apps[0].id | Should Be 'KiCad.KiCad'
+        $profile.apps[0].source | Should Be 'winget'
+        $profile.apps[0].enabled | Should Be $true
 
         $list = (Invoke-WapCli -Command profile -Arguments @('capture', 'list', 'dev') -RepositoryRoot $repo *>&1 | Out-String)
         $list | Should Match 'kicad'
@@ -821,7 +829,7 @@ Describe 'interactive Windows Sandbox capture' {
         Invoke-WapCli -Command profile -Arguments @('capture', 'remove', 'dev', 'kicad') -RepositoryRoot $repo
         (Join-Path $repo 'profiles/dev/captures/kicad') | Should Not Exist
         $profileYaml = Get-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml') -Raw
-        $profileYaml | Should Not Match 'id: kicad'
+        $profileYaml | Should Not Match '(?m)^\s{2}- id: kicad$'
     }
 
     It 'adds, lists, shows, and removes winget packages on a profile' {
@@ -976,6 +984,7 @@ Describe 'interactive Windows Sandbox capture' {
         $wingetArgs | Should Match 'install -e --id Python\.Python\.3\.13 --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity'
         $wingetArgs | Should Not Match 'Disabled\.Tool'
         $output | Should Match 'Packages: 2 declared \(1 enabled\)'
+        $output | Should Match '\[install\] Python\.Python\.3\.13'
         $output | Should Match '\[disabled\] Disabled\.Tool'
         $output | Should Match 'Attached captures: 1 declared \(0 enabled\)'
         $output | Should Match '\[disabled\] settings'
@@ -1021,6 +1030,7 @@ Describe 'interactive Windows Sandbox capture' {
         $startup | Should Match 'wap.ps1 init'
         $startup | Should Match 'WAP_WINGET_PREREQ_ROOT'
         $startup | Should Match 'profile install'
+        $startup | Should Match 'WAP_PROFILE_INSTALL_STATUS_PATH'
         $startup | Should Match 'profile activate <profile>'
         $startup | Should Match 'profile deactivate <profile>'
         $startup | Should Match 'profile uninstall <profile>'

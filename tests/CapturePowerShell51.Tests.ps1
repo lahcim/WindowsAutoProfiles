@@ -107,6 +107,18 @@ if ($roundTrip.Count -ne 2) {
     throw 'PowerShell 5.1 JSON array normalization failed.'
 }
 
+$originalPath = $env:Path
+try {
+    $env:Path = $WorkRoot
+    $wingetPackages = @(Get-CaptureWingetPackages)
+    if ($wingetPackages.Count -ne 0) {
+        throw 'PowerShell 5.1 winget package capture should be empty when winget is unavailable.'
+    }
+}
+finally {
+    $env:Path = $originalPath
+}
+
 $noise = Get-CaptureRegistryNoiseReason -RegistryChange ([pscustomobject]@{
     key = 'HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.txt'
 })

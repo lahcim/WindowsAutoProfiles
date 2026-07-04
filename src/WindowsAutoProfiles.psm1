@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 
 $script:WapMinimumPowerShellVersion = [version]'5.1'
 $script:WapVersion = '1.1'
-$script:WapLastUpdated = '2026-07-04T05:14:31Z'
+$script:WapLastUpdated = '2026-07-04T05:18:20Z'
 
 function Assert-WapPowerShellVersion {
     param(
@@ -1291,6 +1291,48 @@ function Invoke-WapWinget {
     if ($LASTEXITCODE -ne 0) { throw "$ErrorMessage (exit $LASTEXITCODE)." }
 }
 
+function Write-WapProfileInstallStatus {
+    param(
+        [Parameter(Mandatory)][string] $ItemType,
+        [Parameter(Mandatory)][string] $State,
+        [string] $ItemId,
+        [int] $Index = 0,
+        [int] $Total = 0,
+        [string] $ErrorMessage
+    )
+
+    $statusPath = $env:WAP_PROFILE_INSTALL_STATUS_PATH
+    if ([string]::IsNullOrWhiteSpace($statusPath)) { return }
+
+    $detail = if ($ItemId) {
+        $position = if ($Index -gt 0 -and $Total -gt 0) { " $Index/$Total" } else { '' }
+        "$ItemType$position $State`: $ItemId"
+    }
+    else {
+        "$ItemType $State"
+    }
+
+    try {
+        [ordered]@{
+            phase = 'installingProfile'
+            success = $false
+            updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+            stepType = $ItemType
+            stepState = $State
+            item = $ItemId
+            index = $Index
+            total = $Total
+            detail = $detail
+            error = $ErrorMessage
+            log = $env:WAP_PROFILE_INSTALL_LOG_PATH
+            errorLog = $env:WAP_PROFILE_INSTALL_ERROR_PATH
+        } | ConvertTo-Json | Set-Content -LiteralPath $statusPath -Encoding UTF8
+    }
+    catch {
+        Write-Warning "Could not write profile install status to '$statusPath': $($_.Exception.Message)"
+    }
+}
+
 function Get-WapWingetInstallArguments {
     param(
         [Parameter(Mandatory)][string] $Id,
@@ -1340,38 +1382,57 @@ function Install-WapProfile {
 
     $enabledApps = @($profile.apps | Where-Object { $_.enabled })
     Write-Host "  Packages: $($profile.apps.Count) declared ($($enabledApps.Count) enabled)"
+    $packageIndex = 0
     foreach ($app in $profile.apps) {
+        $packageIndex++
         if (-not $app.enabled) {
             Write-Host "    [disabled] $($app.id) (source: $($app.source))"
+            Write-WapProfileInstallStatus -ItemType 'package' -State 'disabled' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
             continue
         }
         Write-Host "    [check] $($app.id) (source: $($app.source))"
-        if ($PSCmdlet.ShouldProcess($app.id, 'Install winget package')) {
-            $winget = Get-Command winget -ErrorAction SilentlyContinue
-            if (-not $winget) { throw 'winget was not found. Install App Installer or rerun with -WhatIf.' }
-            & $winget.Source list --id $app.id --exact --accept-source-agreements | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "    [ready] $($app.id) is already installed"
-                continue
+        Write-WapProfileInstallStatus -ItemType 'package' -State 'checking' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
+        try {
+            if ($PSCmdlet.ShouldProcess($app.id, 'Install winget package')) {
+                $winget = Get-Command winget -ErrorAction SilentlyContinue
+                if (-not $winget) { throw 'winget was not found. Install App Installer or rerun with -WhatIf.' }
+                & $winget.Source list --id $app.id --exact --accept-source-agreements | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "    [ready] $($app.id) is already installed"
+                    Write-WapProfileInstallStatus -ItemType 'package' -State 'ready' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
+                    continue
+                }
+                Write-Host "    [install] $($app.id)"
+                Write-WapProfileInstallStatus -ItemType 'package' -State 'installing' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
+                $installArguments = Get-WapWingetInstallArguments -Id $app.id -Source $app.source
+                & $winget.Source @installArguments
+                if ($LASTEXITCODE -ne 0) { throw "winget failed to install '$($app.id)' from source '$($app.source)' (exit $LASTEXITCODE)." }
+                $installedPackages += $app.id
+                Write-Host "    [installed] $($app.id)"
+                Write-WapProfileInstallStatus -ItemType 'package' -State 'installed' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
             }
-            $installArguments = Get-WapWingetInstallArguments -Id $app.id -Source $app.source
-            & $winget.Source @installArguments
-            if ($LASTEXITCODE -ne 0) { throw "winget failed to install '$($app.id)' from source '$($app.source)' (exit $LASTEXITCODE)." }
-            $installedPackages += $app.id
-            Write-Host "    [installed] $($app.id)"
+        }
+        catch {
+            Write-WapProfileInstallStatus -ItemType 'package' -State 'failed' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count -ErrorMessage $_.Exception.Message
+            throw
         }
     }
 
     $capturePlan = @(Get-WapProfileCapturePlan -Name $Name -RepositoryRoot $RepositoryRoot)
     $enabledCapturePlan = @($capturePlan | Where-Object { $_.enabled })
     Write-Host "  Attached captures: $($capturePlan.Count) declared ($($enabledCapturePlan.Count) enabled)"
+    $captureIndex = 0
     foreach ($capture in $capturePlan) {
+        $captureIndex++
         if (-not $capture.enabled) {
             Write-Host "    [disabled] $($capture.id) selected=$($capture.selectedVersion)"
+            Write-WapProfileInstallStatus -ItemType 'capture' -State 'disabled' -ItemId $capture.id -Index $captureIndex -Total $capturePlan.Count
             continue
         }
         $replay = if ($capture.replayVersions.Count) { ($capture.replayVersions -join ', ') } else { 'base only' }
         Write-Host "    [capture] $($capture.id) selected=$($capture.selectedVersion) replay=$replay"
+        Write-WapProfileInstallStatus -ItemType 'capture' -State 'applying' -ItemId $capture.id -Index $captureIndex -Total $capturePlan.Count
+        Write-WapProfileInstallStatus -ItemType 'capture' -State 'applied' -ItemId $capture.id -Index $captureIndex -Total $capturePlan.Count
     }
 
     Write-Host "  Shortcuts: $($profile.shortcuts.Count) declared"
@@ -2153,6 +2214,7 @@ function Wait-WapProfileSandboxInstall {
     $started = Get-Date
     $lastReport = -15
     $lastPhase = $null
+    $lastDetail = $null
     $processExitedAt = $null
     $reportedProcessExit = $false
     Write-Host "Waiting for Sandbox profile install to finish (timeout: $TimeoutSeconds seconds)..."
@@ -2180,11 +2242,24 @@ function Wait-WapProfileSandboxInstall {
                         Write-Host 'Command guide inside Sandbox: C:\WAPProfileSandbox\profile-testing.md'
                         return
                     }
+                    $statusDetail = if ($status.PSObject.Properties['detail']) { [string]$status.detail } else { $null }
+                    $stepState = if ($status.PSObject.Properties['stepState']) { [string]$status.stepState } else { $null }
+                    if ($statusDetail -and $statusDetail -ne $lastDetail) {
+                        $detailPrefix = if ($stepState -eq 'failed') { '  Sandbox profile install failed step:' } else { '  Sandbox profile install step:' }
+                        Write-Host "$detailPrefix $statusDetail"
+                        if ($stepState -eq 'failed' -and $status.error) {
+                            Write-Host "  Failure: $($status.error)"
+                        }
+                        $lastDetail = $statusDetail
+                    }
                     if ($status.success -eq $false -and $status.phase -eq 'failed') {
                         $details = if (Test-Path -LiteralPath $errorPath -PathType Leaf) {
                             (Get-Content -LiteralPath $errorPath -Raw -ErrorAction SilentlyContinue).Trim()
                         }
-                        else { [string]$status.error }
+                        else {
+                            $detailMessage = if ($statusDetail) { "$statusDetail. " } else { '' }
+                            "$detailMessage$($status.error)"
+                        }
                         if ($details.Length -gt 700) { $details = $details.Substring(0, 700) + '...' }
                         throw "Sandbox profile install failed. $details`nDetailed Sandbox install log: $logPath`nDetailed Sandbox install error: $errorPath"
                     }
@@ -2374,6 +2449,9 @@ try {
 
     Write-InstallStatus -Phase 'installingProfile' -Success `$false -ErrorMessage `$null
     Write-Host 'Phase: installing profile inside Sandbox.' -ForegroundColor Cyan
+    `$env:WAP_PROFILE_INSTALL_STATUS_PATH = `$statusPath
+    `$env:WAP_PROFILE_INSTALL_LOG_PATH = `$logPath
+    `$env:WAP_PROFILE_INSTALL_ERROR_PATH = `$errorPath
     & .\wap.ps1 profile install `$profileName
     if (-not `$?) {
         `$exitDescription = if (`$null -ne `$LASTEXITCODE) { " with exit code `$LASTEXITCODE" } else { '' }
@@ -3268,8 +3346,29 @@ function Add-WapProfileCapture {
     } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $targetRoot 'metadata.json') -Encoding UTF8
 
     $references += [pscustomobject]@{ id = $id; enabled = $true }
-    Set-WapProfileCaptureReferences -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Captures $references
+    $packages = @($profile.apps)
+    $addedPackages = @()
+    foreach ($package in @(Read-WapCaptureJsonItems (Get-WapObjectProperty -Object $manifest -Name newWingetPackages))) {
+        $packageId = if ($package -is [string]) { [string]$package } else { [string]$package.id }
+        if ([string]::IsNullOrWhiteSpace($packageId)) { continue }
+        $source = if ($package -isnot [string] -and $package.PSObject.Properties['source'] -and
+            -not [string]::IsNullOrWhiteSpace([string]$package.source)) {
+            [string]$package.source
+        }
+        else { 'winget' }
+        if ($packages | Where-Object { $_.id -eq $packageId -and $_.source -eq $source }) { continue }
+        $packages += [pscustomobject]@{
+            id = $packageId
+            source = $source
+            enabled = $true
+        }
+        $addedPackages += "$packageId (source: $source)"
+    }
+    Set-WapProfileDefinitionLists -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $packages -Captures $references
     Write-Host "Added capture '$id' to profile '$ProfileName'."
+    foreach ($package in $addedPackages) {
+        Write-Host "Added Sandbox-detected winget package '$package' to profile '$ProfileName'."
+    }
 }
 
 function Get-WapProfileUnreferencedCaptures {
@@ -3949,37 +4048,12 @@ function New-WapCapture {
     if (Test-Path -LiteralPath $path) { throw "Profile '$Name' already exists." }
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
 
-    $packages = @()
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if ($winget) {
-        $exportPath = Join-Path ([IO.Path]::GetTempPath()) "wap-export-$([guid]::NewGuid()).json"
-        try {
-            & $winget.Source export --output $exportPath --accept-source-agreements 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $exportPath)) {
-                try {
-                    $export = Get-Content -LiteralPath $exportPath -Raw | ConvertFrom-Json
-                    $packages = @($export.Sources.Packages.PackageIdentifier | Sort-Object -Unique)
-                } catch {
-                    Write-Warning 'winget export could not be parsed; creating an empty apps list.'
-                }
-            }
-        }
-        finally {
-            if (Test-Path -LiteralPath $exportPath) {
-                Remove-Item -LiteralPath $exportPath -Force
-            }
-        }
-    }
-
     $lines = @(
         "# Captured $(Get-Date -Format o)"
         "name: $Name"
         'apps:'
     )
-    if ($packages.Count) {
-        $lines += $packages | ForEach-Object { "  - id: $_" }
-    }
-    else { $lines += '  # - id: Git.Git' }
+    $lines += '  # Add packages explicitly with: .\wap.ps1 profile winget add <profile> <packageId>'
     $lines += @(
         'env:'
         "  WAP_PROFILE: $Name"
@@ -4045,7 +4119,7 @@ function Show-WapHelp {
     @'
 WindowsAutoProfiles
 Version: 1.1
-Last updated: 2026-07-04T05:14:31Z
+Last updated: 2026-07-04T05:18:20Z
 Author: Michal Zygmunt <lahcim@fajne.com>
 Minimum PowerShell: 5.1
 
