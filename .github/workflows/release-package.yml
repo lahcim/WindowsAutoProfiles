@@ -66,7 +66,7 @@ jobs:
           .\packaging\Build-WapRelease.ps1 -Version '${{ inputs.version }}' -RequireMsi -AcceptWixEula
 
       - name: Upload package artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: WindowsAutoProfiles-${{ inputs.version }}
           path: artifacts/release/WindowsAutoProfiles-${{ inputs.version }}.*
@@ -89,10 +89,19 @@ jobs:
           if ('${{ inputs.prerelease }}' -eq 'true') {
             $releaseArgs += '--prerelease'
           }
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $previousErrorActionPreference = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          $releaseViewOutput = & gh release view $tag 2>&1
+          $releaseViewExitCode = $LASTEXITCODE
+          $ErrorActionPreference = $previousErrorActionPreference
+
+          if ($releaseViewExitCode -eq 0) {
             & gh @(@('release', 'upload', $tag) + $artifacts + @('--clobber'))
           }
-          else {
+          elseif (($releaseViewOutput | Out-String) -match 'release not found') {
             & gh @releaseArgs
+          }
+          else {
+            $releaseViewText = ($releaseViewOutput | Out-String).Trim()
+            throw "Could not check GitHub Release '$tag'. gh exited with $releaseViewExitCode. $releaseViewText"
           }
