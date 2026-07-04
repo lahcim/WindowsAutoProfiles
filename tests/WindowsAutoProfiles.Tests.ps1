@@ -734,10 +734,20 @@ Describe 'interactive Windows Sandbox capture' {
         $metadata.name | Should Be 'KiCad'
         $metadata.description | Should Be 'Electronics tools'
         $metadataRaw | Should Match '"createdAt":\s+"2026-01-01T00:00:00Z"'
+        $profileYaml = Get-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml') -Raw
+        $profileYaml | Should Match 'captures:'
+        $profileYaml | Should Match 'id: kicad'
+        $profileYaml | Should Match 'enabled: true'
 
         $list = (Invoke-WapCli -Command profile -Arguments @('capture', 'list', 'dev') -RepositoryRoot $repo *>&1 | Out-String)
         $list | Should Match 'kicad'
         $list | Should Match 'KiCad'
+        $list | Should Match 'True'
+
+        Invoke-WapCli -Command profile -Arguments @('capture', 'disable', 'dev', 'kicad') -RepositoryRoot $repo
+        $list = (Invoke-WapCli -Command profile -Arguments @('capture', 'list', 'dev') -RepositoryRoot $repo *>&1 | Out-String)
+        $list | Should Match 'False'
+        Invoke-WapCli -Command profile -Arguments @('capture', 'enable', 'dev', 'kicad') -RepositoryRoot $repo
 
         Invoke-WapCli -Command profile -Arguments @('capture', 'edit', 'dev', 'kicad', '--name', 'KiCad 10', '--description', 'Updated') -RepositoryRoot $repo
         $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
@@ -802,11 +812,16 @@ Describe 'interactive Windows Sandbox capture' {
         $copyMetadata.id | Should Be 'kicad-copy'
         $copyMetadata.copiedFromProfile | Should Be 'dev'
         $copyMetadata.copiedFromCaptureId | Should Be 'kicad'
+        $opsYaml = Get-Content -LiteralPath (Join-Path $repo 'profiles/ops/profile.yaml') -Raw
+        $opsYaml | Should Match 'id: kicad-copy'
+        $opsYaml | Should Match 'enabled: true'
 
         Invoke-WapCli -Command profile -Arguments @('capture', 'remove', 'dev', 'kicad', '-WhatIf') -RepositoryRoot $repo
         (Join-Path $repo 'profiles/dev/captures/kicad') | Should Exist
         Invoke-WapCli -Command profile -Arguments @('capture', 'remove', 'dev', 'kicad') -RepositoryRoot $repo
         (Join-Path $repo 'profiles/dev/captures/kicad') | Should Not Exist
+        $profileYaml = Get-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml') -Raw
+        $profileYaml | Should Not Match 'id: kicad'
     }
 
     It 'adds, lists, shows, and removes winget packages on a profile' {
@@ -829,21 +844,94 @@ Describe 'interactive Windows Sandbox capture' {
         @($profile.apps).Count | Should Be 2
         $profile.apps[0].id | Should Be 'Python.Python.3.13'
         $profile.apps[0].source | Should Be 'winget'
+        $profile.apps[0].enabled | Should Be $true
         $profile.apps[1].source | Should Be 'msstore'
 
         $list = (Invoke-WapCli -Command profile -Arguments @('winget', 'list', 'dev') -RepositoryRoot $repo *>&1 | Out-String)
         $list | Should Match 'Python\.Python\.3\.13'
         $list | Should Match 'msstore'
+        $list | Should Match 'True'
+
+        Invoke-WapCli -Command profile -Arguments @('winget', 'disable', 'dev', 'Python.Python.3.13') -RepositoryRoot $repo
+        $profile = Import-WapProfile -Name dev -RepositoryRoot $repo
+        $profile.apps[0].enabled | Should Be $false
+        $list = (Invoke-WapCli -Command profile -Arguments @('winget', 'list', 'dev') -RepositoryRoot $repo *>&1 | Out-String)
+        $list | Should Match 'False'
+        Invoke-WapCli -Command profile -Arguments @('winget', 'enable', 'dev', 'Python.Python.3.13') -RepositoryRoot $repo
 
         $show = (Invoke-WapCli -Command profile -Arguments @('show', 'dev') -RepositoryRoot $repo *>&1 | Out-String)
         $show | Should Match 'Winget packages:\s+2'
-        $show | Should Match 'Attached captures:\s+1'
+        $show | Should Match 'Attached captures:\s+0'
+        $show | Should Match 'Unreferenced capture folders:\s+1'
+        $show | Should Match ([regex]::Escape('.\wap.ps1 profile capture enable dev python'))
         $show | Should Match 'Python settings'
 
         Invoke-WapCli -Command profile -Arguments @('winget', 'remove', 'dev', 'Microsoft.VisualStudioCode', '--source', 'msstore') -RepositoryRoot $repo
         $profile = Import-WapProfile -Name dev -RepositoryRoot $repo
         @($profile.apps).Count | Should Be 1
         $profile.apps[0].id | Should Be 'Python.Python.3.13'
+    }
+
+    It 'references orphan captures and normalizes older profile yaml schema on save' {
+        $repo = Join-Path $TestDrive 'profile-reference-orphan'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/dev/captures/orphan') -Force | Out-Null
+        @(
+            'name: dev'
+            'apps:'
+            '  - id: Git.Git'
+            '    source: winget'
+            'env:'
+            '  WAP_PROFILE: dev'
+        ) | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml')
+        [ordered]@{
+            id = 'orphan'
+            name = 'Orphan capture'
+            selectedVersion = 'base'
+            versions = @()
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/captures/orphan/metadata.json') -Encoding UTF8
+        [ordered]@{
+            version = 1
+            changedRegistryKeys = @()
+            addedFiles = @()
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/captures/orphan/capture-manifest.json') -Encoding UTF8
+
+        $list = (Invoke-WapCli -Command profile -Arguments @('capture', 'list', 'dev') -RepositoryRoot $repo *>&1 | Out-String)
+        $list | Should Match 'Unreferenced capture folders'
+        $list | Should Match 'orphan'
+        $list | Should Match ([regex]::Escape('.\wap.ps1 profile capture enable dev orphan'))
+
+        Invoke-WapCli -Command profile -Arguments @('capture', 'enable', 'dev', 'orphan') -RepositoryRoot $repo
+        $profile = Import-WapProfile -Name dev -RepositoryRoot $repo
+        $profile.apps[0].enabled | Should Be $true
+        $profile.captures[0].id | Should Be 'orphan'
+        $profile.captures[0].enabled | Should Be $true
+
+        $yaml = Get-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml') -Raw
+        $yaml | Should Match 'apps:\s+'
+        $yaml | Should Match 'id: Git\.Git'
+        $yaml | Should Match 'enabled: true'
+        $yaml | Should Match 'captures:'
+        $yaml | Should Match 'id: orphan'
+        $yaml | Should Match 'enabled: true'
+
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/dev/captures/auto') -Force | Out-Null
+        [ordered]@{
+            id = 'auto'
+            name = 'Auto referenced'
+            selectedVersion = 'base'
+            versions = @()
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/captures/auto/metadata.json') -Encoding UTF8
+        [ordered]@{
+            version = 1
+            changedRegistryKeys = @()
+            addedFiles = @()
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/captures/auto/capture-manifest.json') -Encoding UTF8
+
+        Invoke-WapCli -Command profile -Arguments @('capture', 'enable', 'dev', 'auto') -RepositoryRoot $repo
+        $profile = Import-WapProfile -Name dev -RepositoryRoot $repo
+        (@($profile.captures) | Where-Object { $_.id -eq 'auto' }).enabled | Should Be $true
     }
 
     It 'installs winget packages non-interactively before reporting captures' {
@@ -856,6 +944,13 @@ Describe 'interactive Windows Sandbox capture' {
             'apps:'
             '  - id: Python.Python.3.13'
             '    source: winget'
+            '    enabled: true'
+            '  - id: Disabled.Tool'
+            '    source: winget'
+            '    enabled: false'
+            'captures:'
+            '  - id: settings'
+            '    enabled: false'
         ) | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml')
         [ordered]@{
             id = 'settings'
@@ -879,7 +974,12 @@ Describe 'interactive Windows Sandbox capture' {
         $wingetArgs = Get-Content -LiteralPath $wingetLog -Raw
         $wingetArgs | Should Match 'list --id Python\.Python\.3\.13 --exact --accept-source-agreements'
         $wingetArgs | Should Match 'install -e --id Python\.Python\.3\.13 --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity'
-        $output.IndexOf('Packages: 1 declared') | Should BeLessThan $output.IndexOf('Attached captures: 1 declared')
+        $wingetArgs | Should Not Match 'Disabled\.Tool'
+        $output | Should Match 'Packages: 2 declared \(1 enabled\)'
+        $output | Should Match '\[disabled\] Disabled\.Tool'
+        $output | Should Match 'Attached captures: 1 declared \(0 enabled\)'
+        $output | Should Match '\[disabled\] settings'
+        $output.IndexOf('Packages: 2 declared') | Should BeLessThan $output.IndexOf('Attached captures: 1 declared')
     }
 
     It 'launches a sandbox profile install test with mounted scripts and profiles' {

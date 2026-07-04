@@ -5,7 +5,7 @@ workspaces from versioned YAML profiles.
 
 Version: 1.1
 
-Last updated: 2026-07-04T04:48:53Z
+Last updated: 2026-07-04T05:14:31Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -126,8 +126,18 @@ name: developer
 
 apps:
   - id: Git.Git
+    source: winget
+    enabled: true
   - id: Microsoft.VisualStudioCode
+    source: winget
+    enabled: true
   - id: Microsoft.PowerShell
+    source: winget
+    enabled: true
+
+captures:
+  - id: developer-settings
+    enabled: true
 
 env:
   WAP_PROFILE: developer
@@ -231,6 +241,7 @@ activation. It does not uninstall packages, delete folders, or remove shortcuts.
 .\wap.ps1 profile winget add developer Python.Python.3.13
 .\wap.ps1 profile winget add developer Microsoft.VisualStudioCode --source winget
 .\wap.ps1 profile winget list developer
+.\wap.ps1 profile winget disable developer Python.Python.3.13
 .\wap.ps1 profile show developer
 .\wap.ps1 profile install developer -WhatIf
 .\wap.ps1 profile install developer --sandbox
@@ -247,6 +258,8 @@ activation. It does not uninstall packages, delete folders, or remove shortcuts.
 .\wap.ps1 capture validate electronics-kicad
 .\wap.ps1 profile capture add developer electronics-kicad --id kicad --name "KiCad"
 .\wap.ps1 profile capture list developer
+.\wap.ps1 profile capture disable developer kicad
+.\wap.ps1 profile capture enable developer kicad
 .\wap.ps1 profile winget remove developer Python.Python.3.13
 .\wap.ps1 capture remove electronics-kicad
 ```

@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 
 $script:WapMinimumPowerShellVersion = [version]'5.1'
 $script:WapVersion = '1.1'
-$script:WapLastUpdated = '2026-07-04T04:51:45Z'
+$script:WapLastUpdated = '2026-07-04T05:14:31Z'
 
 function Assert-WapPowerShellVersion {
     param(
@@ -77,6 +77,22 @@ function ConvertTo-WapOrderedHashtable {
         return ,@($Value | ForEach-Object { ConvertTo-WapOrderedHashtable $_ })
     }
     return $Value
+}
+
+function ConvertFrom-WapEnabledValue {
+    param([AllowNull()] $Value)
+
+    if ($null -eq $Value) { return $true }
+    if ($Value -is [bool]) { return [bool]$Value }
+    switch (([string]$Value).Trim().ToLowerInvariant()) {
+        'true' { return $true }
+        'false' { return $false }
+        '1' { return $true }
+        '0' { return $false }
+        'yes' { return $true }
+        'no' { return $false }
+        default { throw "enabled expects a boolean value: true or false." }
+    }
 }
 
 function Resolve-WapConfigPathValue {
@@ -1048,15 +1064,39 @@ function Import-WapProfile {
     if ($raw.PSObject.Properties['apps'] -and $raw.apps) {
         foreach ($app in @($raw.apps)) {
             if ($app -is [string]) {
-                $packages += [pscustomobject]@{ id = $app; source = 'winget' }
+                $packages += [pscustomobject]@{ id = $app; source = 'winget'; enabled = $true }
             }
             else {
                 $id = if ($app -is [System.Collections.IDictionary]) { $app['id'] } else { $app.id }
                 $source = if ($app -is [System.Collections.IDictionary]) { $app['source'] } else { $app.source }
+                $enabled = if ($app -is [System.Collections.IDictionary]) { $app['enabled'] } else {
+                    if ($app.PSObject.Properties['enabled']) { $app.enabled } else { $null }
+                }
                 if (-not $id) { throw "Every app in '$Name' must have an id." }
                 $packages += [pscustomobject]@{
                     id = [string]$id
                     source = if ($source) { [string]$source } else { 'winget' }
+                    enabled = ConvertFrom-WapEnabledValue $enabled
+                }
+            }
+        }
+    }
+
+    $captureReferences = @()
+    if ($raw.PSObject.Properties['captures'] -and $raw.captures) {
+        foreach ($capture in @($raw.captures)) {
+            if ($capture -is [string]) {
+                $captureReferences += [pscustomobject]@{ id = (Get-WapProfileCaptureId $capture); enabled = $true }
+            }
+            else {
+                $id = if ($capture -is [System.Collections.IDictionary]) { $capture['id'] } else { $capture.id }
+                $enabled = if ($capture -is [System.Collections.IDictionary]) { $capture['enabled'] } else {
+                    if ($capture.PSObject.Properties['enabled']) { $capture.enabled } else { $null }
+                }
+                if (-not $id) { throw "Every capture in '$Name' must have an id." }
+                $captureReferences += [pscustomobject]@{
+                    id = Get-WapProfileCaptureId ([string]$id)
+                    enabled = ConvertFrom-WapEnabledValue $enabled
                 }
             }
         }
@@ -1122,6 +1162,7 @@ function Import-WapProfile {
         sharedRoot = $sharedRoot
         directories = $directoryDefaults
         apps = $packages
+        captures = $captureReferences
         env = $environment
         path = $pathFragments
         shortcuts = $shortcuts
@@ -1200,14 +1241,23 @@ function Get-WapProfileCapturePlan {
         [Parameter(Mandatory)][string] $RepositoryRoot
     )
 
-    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
-    $capturesRoot = Join-Path (Join-Path $config.profilesRoot $Name) 'captures'
+    $profile = Import-WapProfile -Name $Name -RepositoryRoot $RepositoryRoot
+    $capturesRoot = Get-WapProfileCaptureRoot -ProfileName $Name -RepositoryRoot $RepositoryRoot
     if (-not (Test-Path -LiteralPath $capturesRoot -PathType Container)) { return @() }
     return @(
-        Get-ChildItem -LiteralPath $capturesRoot -Directory |
-            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'metadata.json') } |
+        @($profile.captures) |
             ForEach-Object {
-                $metadata = Get-Content -LiteralPath (Join-Path $_.FullName 'metadata.json') -Raw | ConvertFrom-Json
+                $reference = $_
+                $captureRoot = Join-Path $capturesRoot $reference.id
+                $metadataPath = Join-Path $captureRoot 'metadata.json'
+                $manifestPath = Join-Path $captureRoot 'capture-manifest.json'
+                if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
+                    throw "Profile '$Name' references capture '$($reference.id)', but '$metadataPath' was not found."
+                }
+                if ($reference.enabled -and -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+                    throw "Profile '$Name' references capture '$($reference.id)', but '$manifestPath' was not found."
+                }
+                $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
                 $selected = if ($metadata.PSObject.Properties['selectedVersion']) { [string]$metadata.selectedVersion } else { 'base' }
                 $versions = @($metadata.versions | Where-Object { $null -ne $_ } | Sort-Object version)
                 $selectedVersions = if ($selected -eq 'base') {
@@ -1219,8 +1269,10 @@ function Get-WapProfileCapturePlan {
                 [pscustomobject]@{
                     id = $metadata.id
                     name = $metadata.name
+                    enabled = [bool]$reference.enabled
                     selectedVersion = $selected
                     replayVersions = @($selectedVersions)
+                    manifestPath = $manifestPath
                 }
             }
     )
@@ -1286,8 +1338,13 @@ function Install-WapProfile {
         }
     }
 
-    Write-Host "  Packages: $($profile.apps.Count) declared"
+    $enabledApps = @($profile.apps | Where-Object { $_.enabled })
+    Write-Host "  Packages: $($profile.apps.Count) declared ($($enabledApps.Count) enabled)"
     foreach ($app in $profile.apps) {
+        if (-not $app.enabled) {
+            Write-Host "    [disabled] $($app.id) (source: $($app.source))"
+            continue
+        }
         Write-Host "    [check] $($app.id) (source: $($app.source))"
         if ($PSCmdlet.ShouldProcess($app.id, 'Install winget package')) {
             $winget = Get-Command winget -ErrorAction SilentlyContinue
@@ -1306,8 +1363,13 @@ function Install-WapProfile {
     }
 
     $capturePlan = @(Get-WapProfileCapturePlan -Name $Name -RepositoryRoot $RepositoryRoot)
-    Write-Host "  Attached captures: $($capturePlan.Count) declared"
+    $enabledCapturePlan = @($capturePlan | Where-Object { $_.enabled })
+    Write-Host "  Attached captures: $($capturePlan.Count) declared ($($enabledCapturePlan.Count) enabled)"
     foreach ($capture in $capturePlan) {
+        if (-not $capture.enabled) {
+            Write-Host "    [disabled] $($capture.id) selected=$($capture.selectedVersion)"
+            continue
+        }
         $replay = if ($capture.replayVersions.Count) { ($capture.replayVersions -join ', ') } else { 'base only' }
         Write-Host "    [capture] $($capture.id) selected=$($capture.selectedVersion) replay=$replay"
     }
@@ -1328,10 +1390,10 @@ function Install-WapProfile {
             sharedRoot = $profile.sharedRoot
             directories = @($profile.directories.Values)
             createdDirectories = @($createdDirectories)
-            packages = @($profile.apps.id)
+            packages = @($enabledApps.id)
             installedPackages = @($installedPackages)
             shortcuts = @($createdShortcuts)
-            captures = @($capturePlan)
+            captures = @($enabledCapturePlan)
             activation = if ($existing) { $existing.activation } else { $null }
             installedAt = (Get-Date).ToUniversalTime().ToString('o')
         }
@@ -1482,20 +1544,19 @@ function Get-WapProfileCaptureManifests {
         [Parameter(Mandatory)][string] $RepositoryRoot
     )
 
-    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
-    $capturesRoot = Join-Path (Join-Path $config.profilesRoot $Name) 'captures'
-    if (-not (Test-Path -LiteralPath $capturesRoot -PathType Container)) { return @() }
+    $capturePlan = @(Get-WapProfileCapturePlan -Name $Name -RepositoryRoot $RepositoryRoot | Where-Object { $_.enabled })
     return @(
-        Get-ChildItem -LiteralPath $capturesRoot -Filter 'capture-manifest.json' -Recurse -File |
+        $capturePlan |
             ForEach-Object {
+                $manifestPath = $_.manifestPath
                 try {
                     [pscustomobject]@{
-                        Path = $_.FullName
-                        Manifest = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+                        Path = $manifestPath
+                        Manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
                     }
                 }
                 catch {
-                    throw "Attached capture manifest '$($_.FullName)' is invalid: $($_.Exception.Message)"
+                    throw "Attached capture manifest '$manifestPath' is invalid: $($_.Exception.Message)"
                 }
             }
     )
@@ -1556,11 +1617,18 @@ function Test-WapRegistryCleanupKeySafe {
 function Get-WapProfileRegistryCleanupKeys {
     param(
         [Parameter(Mandatory)][string] $Name,
-        [Parameter(Mandatory)][string] $RepositoryRoot
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [switch] $OnlyEnabled
     )
 
     $keys = [System.Collections.ArrayList]::new()
-    foreach ($entry in (Get-WapProfileCaptureManifests -Name $Name -RepositoryRoot $RepositoryRoot)) {
+    $entries = if ($OnlyEnabled) {
+        @(Get-WapProfileCaptureManifests -Name $Name -RepositoryRoot $RepositoryRoot)
+    }
+    else {
+        @(Get-WapProfileAllCaptureManifests -Name $Name -RepositoryRoot $RepositoryRoot)
+    }
+    foreach ($entry in $entries) {
         foreach ($change in @(Read-WapCaptureJsonItems (Get-WapObjectProperty -Object $entry.Manifest -Name changedRegistryKeys))) {
             $key = [string](Get-WapObjectProperty -Object $change -Name key)
             $changeType = [string](Get-WapObjectProperty -Object $change -Name change)
@@ -1571,6 +1639,31 @@ function Get-WapProfileRegistryCleanupKeys {
     }
 
     return @($keys.ToArray() | Sort-Object -Unique | Sort-Object Length -Descending)
+}
+
+function Get-WapProfileAllCaptureManifests {
+    param(
+        [Parameter(Mandatory)][string] $Name,
+        [Parameter(Mandatory)][string] $RepositoryRoot
+    )
+
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    $capturesRoot = Join-Path (Join-Path $config.profilesRoot $Name) 'captures'
+    if (-not (Test-Path -LiteralPath $capturesRoot -PathType Container)) { return @() }
+    return @(
+        Get-ChildItem -LiteralPath $capturesRoot -Filter 'capture-manifest.json' -Recurse -File |
+            ForEach-Object {
+                try {
+                    [pscustomobject]@{
+                        Path = $_.FullName
+                        Manifest = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+                    }
+                }
+                catch {
+                    throw "Attached capture manifest '$($_.FullName)' is invalid: $($_.Exception.Message)"
+                }
+            }
+    )
 }
 
 function Invoke-WapProfileUserDataCleanup {
@@ -1646,7 +1739,7 @@ function Invoke-WapProfileCleanup {
     $profileState = Get-WapProfileState $state $Name
     Write-Host "Cleaning profile '$Name'..."
     if ($RemoveRegistry) {
-        $registryKeys = @(Get-WapProfileRegistryCleanupKeys -Name $Name -RepositoryRoot $RepositoryRoot)
+        $registryKeys = @(Get-WapProfileRegistryCleanupKeys -Name $Name -RepositoryRoot $RepositoryRoot -OnlyEnabled)
         if ($registryKeys | Where-Object { $_ -match '^(?i)(HKEY_LOCAL_MACHINE|HKLM)\\' }) {
             $cleanupArguments = @('profile', 'cleanup', $Name, '--registry')
             if ($RemoveUserData) { $cleanupArguments += '--user-data' }
@@ -1689,8 +1782,21 @@ function Uninstall-WapProfile {
         if ($otherName -ne $Name) { $state.profiles[$otherName].packages }
     })
     $ownedPackages = @($profileState.installedPackages)
+    $enabledPackageIds = @()
+    try {
+        $currentProfile = Import-WapProfile -Name $Name -RepositoryRoot $RepositoryRoot
+        $enabledPackageIds = @($currentProfile.apps | Where-Object { $_.enabled } | ForEach-Object { $_.id })
+    }
+    catch {
+        Write-Warning "Could not load current profile definition to filter enabled packages: $($_.Exception.Message)"
+        $enabledPackageIds = @($ownedPackages)
+    }
     Write-Host "  Packages: $($ownedPackages.Count) installed by this profile"
     foreach ($package in $ownedPackages) {
+        if ($enabledPackageIds -notcontains $package) {
+            Write-Host "    [skip disabled] $package"
+            continue
+        }
         if ($package -in $packagesUsedElsewhere) {
             Write-Host "    [keep] $package is declared by another profile"
             continue
@@ -1715,7 +1821,7 @@ function Uninstall-WapProfile {
     }
 
     if ($RemoveRegistry) {
-        $registryKeys = @(Get-WapProfileRegistryCleanupKeys -Name $Name -RepositoryRoot $RepositoryRoot)
+        $registryKeys = @(Get-WapProfileRegistryCleanupKeys -Name $Name -RepositoryRoot $RepositoryRoot -OnlyEnabled)
         if ($registryKeys | Where-Object { $_ -match '^(?i)(HKEY_LOCAL_MACHINE|HKLM)\\' }) {
             $uninstallArguments = @('profile', 'uninstall', $Name, '--remove-registry')
             if ($RemoveUserData) { $uninstallArguments += '--remove-user-data' }
@@ -1772,10 +1878,32 @@ function Show-WapStatus {
     $rows = foreach ($name in $names) {
         $isInstalled = $state.profiles.Contains($name) -and [bool]$state.profiles[$name].installed
         $isActive = $isInstalled -and $state.activeProfile -eq $name
+        $wingetSummary = ''
+        $captureSummary = ''
+        $unreferencedCount = 0
+        if ($availableNames -contains $name) {
+            try {
+                $profile = Import-WapProfile -Name $name -RepositoryRoot $RepositoryRoot
+                $enabledApps = @($profile.apps | Where-Object { $_.enabled }).Count
+                $disabledApps = @($profile.apps | Where-Object { -not $_.enabled }).Count
+                $enabledCaptures = @($profile.captures | Where-Object { $_.enabled }).Count
+                $disabledCaptures = @($profile.captures | Where-Object { -not $_.enabled }).Count
+                $unreferencedCount = @(Get-WapProfileUnreferencedCaptures -ProfileName $name -RepositoryRoot $RepositoryRoot).Count
+                $wingetSummary = "$enabledApps enabled / $disabledApps disabled"
+                $captureSummary = "$enabledCaptures enabled / $disabledCaptures disabled"
+            }
+            catch {
+                $wingetSummary = 'error'
+                $captureSummary = 'error'
+            }
+        }
         [pscustomobject]@{
             Name = $name
             Installed = $isInstalled
             Status = if ($isActive) { 'Active' } elseif ($isInstalled) { 'Inactive' } else { 'Not installed' }
+            Winget = $wingetSummary
+            Captures = $captureSummary
+            UnreferencedCaptures = $unreferencedCount
             ProfileRoot = [IO.Path]::Combine($config.workspaceRoot, $name)
         }
     }
@@ -2852,6 +2980,70 @@ function ConvertTo-WapYamlScalar {
     return "'" + $Value.Replace("'", "''") + "'"
 }
 
+function Set-WapProfileYamlListSection {
+    param(
+        [Parameter(Mandatory)][string[]] $Lines,
+        [Parameter(Mandatory)][string] $SectionName,
+        [Parameter(Mandatory)][string[]] $Replacement
+    )
+
+    $start = -1
+    for ($index = 0; $index -lt $Lines.Count; $index++) {
+        if ($Lines[$index] -match "^$([regex]::Escape($SectionName)):\s*$") {
+            $start = $index
+            break
+        }
+    }
+
+    if ($start -lt 0) { return @($Lines + $Replacement) }
+
+    $end = $Lines.Count
+    for ($index = $start + 1; $index -lt $Lines.Count; $index++) {
+        if ($Lines[$index] -match '^[A-Za-z][A-Za-z0-9_-]*:\s*(.*)?$') {
+            $end = $index
+            break
+        }
+    }
+
+    $updated = @()
+    if ($start -gt 0) { $updated += $Lines[0..($start - 1)] }
+    $updated += $Replacement
+    if ($end -lt $Lines.Count) { $updated += $Lines[$end..($Lines.Count - 1)] }
+    return @($updated)
+}
+
+function Set-WapProfileDefinitionLists {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [Parameter(Mandatory)] $Packages,
+        [Parameter(Mandatory)] $Captures
+    )
+
+    $path = Get-WapProfileDefinitionPath -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot
+    $lines = @(Get-Content -LiteralPath $path)
+
+    $appsReplacement = @('apps:')
+    foreach ($package in @($Packages)) {
+        $appsReplacement += "  - id: $(ConvertTo-WapYamlScalar ([string]$package.id))"
+        $source = if ($package.source) { [string]$package.source } else { 'winget' }
+        $appsReplacement += "    source: $(ConvertTo-WapYamlScalar $source)"
+        $enabled = if ($package.PSObject.Properties['enabled']) { [bool]$package.enabled } else { $true }
+        $appsReplacement += "    enabled: $($enabled.ToString().ToLowerInvariant())"
+    }
+
+    $capturesReplacement = @('captures:')
+    foreach ($capture in @($Captures)) {
+        $capturesReplacement += "  - id: $(ConvertTo-WapYamlScalar ([string]$capture.id))"
+        $enabled = if ($capture.PSObject.Properties['enabled']) { [bool]$capture.enabled } else { $true }
+        $capturesReplacement += "    enabled: $($enabled.ToString().ToLowerInvariant())"
+    }
+
+    $updated = Set-WapProfileYamlListSection -Lines $lines -SectionName 'apps' -Replacement $appsReplacement
+    $updated = Set-WapProfileYamlListSection -Lines $updated -SectionName 'captures' -Replacement $capturesReplacement
+    $updated | Set-Content -LiteralPath $path -Encoding utf8
+}
+
 function Set-WapProfileWingetPackages {
     param(
         [Parameter(Mandatory)][string] $ProfileName,
@@ -2859,41 +3051,19 @@ function Set-WapProfileWingetPackages {
         [Parameter(Mandatory)] $Packages
     )
 
-    $path = Get-WapProfileDefinitionPath -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot
-    $lines = @(Get-Content -LiteralPath $path)
-    $replacement = @('apps:')
-    foreach ($package in @($Packages)) {
-        $replacement += "  - id: $(ConvertTo-WapYamlScalar ([string]$package.id))"
-        $source = if ($package.source) { [string]$package.source } else { 'winget' }
-        $replacement += "    source: $(ConvertTo-WapYamlScalar $source)"
-    }
+    $profile = Import-WapProfile -Name $ProfileName -RepositoryRoot $RepositoryRoot
+    Set-WapProfileDefinitionLists -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $Packages -Captures $profile.captures
+}
 
-    $start = -1
-    for ($index = 0; $index -lt $lines.Count; $index++) {
-        if ($lines[$index] -match '^apps:\s*$') {
-            $start = $index
-            break
-        }
-    }
+function Set-WapProfileCaptureReferences {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [Parameter(Mandatory)] $Captures
+    )
 
-    if ($start -lt 0) {
-        $updated = @($lines + $replacement)
-    }
-    else {
-        $end = $lines.Count
-        for ($index = $start + 1; $index -lt $lines.Count; $index++) {
-            if ($lines[$index] -match '^[A-Za-z][A-Za-z0-9_-]*:\s*(.*)?$') {
-                $end = $index
-                break
-            }
-        }
-        $updated = @()
-        if ($start -gt 0) { $updated += $lines[0..($start - 1)] }
-        $updated += $replacement
-        if ($end -lt $lines.Count) { $updated += $lines[$end..($lines.Count - 1)] }
-    }
-
-    $updated | Set-Content -LiteralPath $path -Encoding utf8
+    $profile = Import-WapProfile -Name $ProfileName -RepositoryRoot $RepositoryRoot
+    Set-WapProfileDefinitionLists -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $profile.apps -Captures $Captures
 }
 
 function Add-WapProfileWingetPackage {
@@ -2911,9 +3081,39 @@ function Add-WapProfileWingetPackage {
     if ($packages | Where-Object { $_.id -eq $PackageId -and $_.source -eq $Source }) {
         throw "Profile '$ProfileName' already has winget package '$PackageId' from source '$Source'."
     }
-    $packages += [pscustomobject]@{ id = $PackageId; source = $Source }
+    $packages += [pscustomobject]@{ id = $PackageId; source = $Source; enabled = $true }
     Set-WapProfileWingetPackages -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $packages
     Write-Host "Added winget package '$PackageId' to profile '$ProfileName' (source: $Source)."
+}
+
+function Set-WapProfileWingetPackageEnabled {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $PackageId,
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [Parameter(Mandatory)][bool] $Enabled,
+        [string] $Source
+    )
+
+    $profile = Import-WapProfile -Name $ProfileName -RepositoryRoot $RepositoryRoot
+    $matches = @($profile.apps | Where-Object { $_.id -eq $PackageId -and ((-not $Source) -or $_.source -eq $Source) })
+    if (-not $matches.Count) {
+        if ($Source) { throw "Profile '$ProfileName' does not have winget package '$PackageId' from source '$Source'." }
+        throw "Profile '$ProfileName' does not have winget package '$PackageId'."
+    }
+    if ($matches.Count -gt 1 -and -not $Source) {
+        throw "Profile '$ProfileName' has multiple entries for '$PackageId'. Specify --source."
+    }
+    $packages = @($profile.apps | ForEach-Object {
+        [pscustomobject]@{
+            id = $_.id
+            source = $_.source
+            enabled = if ($_.id -eq $PackageId -and ((-not $Source) -or $_.source -eq $Source)) { $Enabled } else { [bool]$_.enabled }
+        }
+    })
+    Set-WapProfileWingetPackages -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $packages
+    $stateText = if ($Enabled) { 'enabled' } else { 'disabled' }
+    Write-Host "Winget package '$PackageId' is now $stateText on profile '$ProfileName'."
 }
 
 function Show-WapProfileWingetPackages {
@@ -2928,7 +3128,7 @@ function Show-WapProfileWingetPackages {
         Write-Host "Profile '$ProfileName' has no winget packages."
         return
     }
-    $items | Select-Object id, source | Format-Table -AutoSize -Wrap
+    $items | Select-Object id, source, enabled | Format-Table -AutoSize -Wrap
 }
 
 function Remove-WapProfileWingetPackage {
@@ -2977,11 +3177,31 @@ function Show-WapProfile {
     Write-Host "Shared root:    $($profile.sharedRoot)"
     Write-Host ''
     Write-Host "Winget packages: $($profile.apps.Count)"
-    if ($profile.apps.Count) { $profile.apps | Select-Object id, source | Format-Table -AutoSize -Wrap }
+    if ($profile.apps.Count) { $profile.apps | Select-Object id, source, enabled | Format-Table -AutoSize -Wrap }
     Write-Host ''
     $capturePlan = @(Get-WapProfileCapturePlan -Name $ProfileName -RepositoryRoot $RepositoryRoot)
     Write-Host "Attached captures: $($capturePlan.Count)"
-    if ($capturePlan.Count) { $capturePlan | Select-Object id, name, selectedVersion | Format-Table -AutoSize -Wrap }
+    if ($capturePlan.Count) { $capturePlan | Select-Object id, name, enabled, selectedVersion | Format-Table -AutoSize -Wrap }
+    $unreferenced = @(Get-WapProfileUnreferencedCaptures -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot)
+    if ($unreferenced.Count) {
+        Write-Host ''
+        Write-Host "Unreferenced capture folders: $($unreferenced.Count)"
+        $unreferenced | Select-Object id, name, selectedVersion | Format-Table -AutoSize -Wrap
+        Write-WapUnreferencedCaptureGuidance -ProfileName $ProfileName -Captures $unreferenced
+    }
+}
+
+function Write-WapUnreferencedCaptureGuidance {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)] $Captures
+    )
+
+    Write-Host ''
+    Write-Host 'To add unreferenced captures to profile.yaml and enable them, run:'
+    foreach ($capture in @($Captures)) {
+        Write-Host "  .\wap.ps1 profile capture enable $ProfileName $($capture.id)"
+    }
 }
 
 function Add-WapProfileCapture {
@@ -3011,6 +3231,11 @@ function Add-WapProfileCapture {
     $targetRoot = Join-Path $capturesRoot $id
     if (Test-Path -LiteralPath $targetRoot) {
         throw "Profile '$ProfileName' already has a capture with id '$id'."
+    }
+    $profile = Import-WapProfile -Name $ProfileName -RepositoryRoot $RepositoryRoot
+    $references = @($profile.captures)
+    if ($references | Where-Object { $_.id -eq $id }) {
+        throw "Profile '$ProfileName' already references capture '$id' in profile.yaml."
     }
 
     New-Item -ItemType Directory -Path $targetRoot -Force | Out-Null
@@ -3042,7 +3267,30 @@ function Add-WapProfileCapture {
         versions = @()
     } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $targetRoot 'metadata.json') -Encoding UTF8
 
+    $references += [pscustomobject]@{ id = $id; enabled = $true }
+    Set-WapProfileCaptureReferences -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Captures $references
     Write-Host "Added capture '$id' to profile '$ProfileName'."
+}
+
+function Get-WapProfileUnreferencedCaptures {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $RepositoryRoot
+    )
+
+    $profile = Import-WapProfile -Name $ProfileName -RepositoryRoot $RepositoryRoot
+    $referencedIds = @($profile.captures | ForEach-Object { [string]$_.id })
+    $root = Get-WapProfileCaptureRoot -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return @() }
+    return @(
+        Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+            Where-Object {
+                (Test-Path -LiteralPath (Join-Path $_.FullName 'metadata.json')) -and
+                ($referencedIds -notcontains $_.Name)
+            } |
+            ForEach-Object { Get-Content -LiteralPath (Join-Path $_.FullName 'metadata.json') -Raw | ConvertFrom-Json } |
+            Sort-Object id
+    )
 }
 
 function Show-WapProfileCaptures {
@@ -3051,17 +3299,79 @@ function Show-WapProfileCaptures {
         [Parameter(Mandatory)][string] $RepositoryRoot
     )
 
-    $root = Get-WapProfileCaptureRoot -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot
-    $items = @(
-        Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'metadata.json') } |
-            ForEach-Object { Get-Content -LiteralPath (Join-Path $_.FullName 'metadata.json') -Raw | ConvertFrom-Json }
-    )
+    $items = @(Get-WapProfileCapturePlan -Name $ProfileName -RepositoryRoot $RepositoryRoot)
+    $unreferenced = @(Get-WapProfileUnreferencedCaptures -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot)
     if (-not $items.Count) {
-        Write-Host "Profile '$ProfileName' has no captures."
-        return
+        Write-Host "Profile '$ProfileName' has no referenced captures."
     }
-    $items | Sort-Object id | Select-Object id, name, selectedVersion, createdAt, addedAt, description | Format-Table -AutoSize -Wrap
+    else {
+        Write-Host "Referenced captures:"
+        $items | Sort-Object id | Select-Object id, name, enabled, selectedVersion | Format-Table -AutoSize -Wrap
+    }
+    if ($unreferenced.Count) {
+        Write-Host ''
+        Write-Host 'Unreferenced capture folders:'
+        $unreferenced | Select-Object id, name, selectedVersion, createdAt, addedAt, description | Format-Table -AutoSize -Wrap
+        Write-WapUnreferencedCaptureGuidance -ProfileName $ProfileName -Captures $unreferenced
+    }
+}
+
+function Set-WapProfileCaptureEnabled {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $CaptureId,
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [Parameter(Mandatory)][bool] $Enabled
+    )
+
+    $id = Get-WapProfileCaptureId $CaptureId
+    $profile = Import-WapProfile -Name $ProfileName -RepositoryRoot $RepositoryRoot
+    if (-not (@($profile.captures) | Where-Object { $_.id -eq $id })) {
+        if ($Enabled) {
+            Add-WapProfileCaptureReference -ProfileName $ProfileName -CaptureId $id -RepositoryRoot $RepositoryRoot -Enabled $true
+            return
+        }
+        throw "Profile '$ProfileName' does not reference capture '$id' in profile.yaml. Use 'profile capture enable' to add and enable it first."
+    }
+    $references = @($profile.captures | ForEach-Object {
+        [pscustomobject]@{
+            id = $_.id
+            enabled = if ($_.id -eq $id) { $Enabled } else { [bool]$_.enabled }
+        }
+    })
+    Set-WapProfileCaptureReferences -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Captures $references
+    $stateText = if ($Enabled) { 'enabled' } else { 'disabled' }
+    Write-Host "Capture '$id' is now $stateText on profile '$ProfileName'."
+}
+
+function Add-WapProfileCaptureReference {
+    param(
+        [Parameter(Mandatory)][string] $ProfileName,
+        [Parameter(Mandatory)][string] $CaptureId,
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [bool] $Enabled = $true
+    )
+
+    $id = Get-WapProfileCaptureId $CaptureId
+    $root = Get-WapProfileCaptureRoot -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot
+    $captureRoot = Join-Path $root $id
+    $metadataPath = Join-Path $captureRoot 'metadata.json'
+    $manifestPath = Join-Path $captureRoot 'capture-manifest.json'
+    if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
+        throw "Capture folder '$captureRoot' does not contain metadata.json."
+    }
+    if ($Enabled -and -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Capture '$id' cannot be enabled because '$manifestPath' was not found."
+    }
+    $profile = Import-WapProfile -Name $ProfileName -RepositoryRoot $RepositoryRoot
+    if (@($profile.captures) | Where-Object { $_.id -eq $id }) {
+        throw "Profile '$ProfileName' already references capture '$id' in profile.yaml."
+    }
+    $references = @($profile.captures)
+    $references += [pscustomobject]@{ id = $id; enabled = $Enabled }
+    Set-WapProfileCaptureReferences -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Captures $references
+    $stateText = if ($Enabled) { 'enabled' } else { 'disabled' }
+    Write-Host "Capture '$id' was added to profile.yaml and is now $stateText on profile '$ProfileName'."
 }
 
 function Remove-WapProfileCapture {
@@ -3080,6 +3390,9 @@ function Remove-WapProfileCapture {
     }
     if ($PSCmdlet.ShouldProcess($path, 'Remove profile capture')) {
         Remove-Item -LiteralPath $path -Recurse -Force
+        $profile = Import-WapProfile -Name $ProfileName -RepositoryRoot $RepositoryRoot
+        $references = @($profile.captures | Where-Object { $_.id -ne $id })
+        Set-WapProfileCaptureReferences -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Captures $references
         Write-Host "Removed capture '$id' from profile '$ProfileName'."
     }
 }
@@ -3109,6 +3422,11 @@ function Copy-WapProfileCapture {
     if (Test-Path -LiteralPath $targetPath) {
         throw "Profile '$ToProfileName' already has a capture with id '$targetId'."
     }
+    $targetProfile = Import-WapProfile -Name $ToProfileName -RepositoryRoot $RepositoryRoot
+    $references = @($targetProfile.captures)
+    if ($references | Where-Object { $_.id -eq $targetId }) {
+        throw "Profile '$ToProfileName' already references capture '$targetId' in profile.yaml."
+    }
     New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
     Get-ChildItem -LiteralPath $sourcePath -Force | Copy-Item -Destination $targetPath -Recurse -Force
     $metadataPath = Join-Path $targetPath 'metadata.json'
@@ -3120,6 +3438,8 @@ function Copy-WapProfileCapture {
     Set-WapObjectProperty -Object $metadata -Name copiedFromProfile -Value $FromProfileName
     Set-WapObjectProperty -Object $metadata -Name copiedFromCaptureId -Value $sourceId
     $metadata | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
+    $references += [pscustomobject]@{ id = $targetId; enabled = $true }
+    Set-WapProfileCaptureReferences -ProfileName $ToProfileName -RepositoryRoot $RepositoryRoot -Captures $references
     Write-Host "Copied capture '$sourceId' from profile '$FromProfileName' to '$ToProfileName' as '$targetId'."
 }
 
@@ -3725,7 +4045,7 @@ function Show-WapHelp {
     @'
 WindowsAutoProfiles
 Version: 1.1
-Last updated: 2026-07-04T04:51:45Z
+Last updated: 2026-07-04T05:14:31Z
 Author: Michal Zygmunt <lahcim@fajne.com>
 Minimum PowerShell: 5.1
 
@@ -3755,9 +4075,14 @@ Usage:
   .\wap.ps1 profile show <name>
   .\wap.ps1 profile winget add <profile> <packageId> [--source <source>]
   .\wap.ps1 profile winget list <profile>
+  .\wap.ps1 profile winget enable <profile> <packageId> [--source <source>]
+  .\wap.ps1 profile winget disable <profile> <packageId> [--source <source>]
   .\wap.ps1 profile winget remove <profile> <packageId> [--source <source>] [-WhatIf]
+
   .\wap.ps1 profile capture add <profile> <capture> [--id <id>] [--name <name>] [--description <text>]
   .\wap.ps1 profile capture list <profile>
+  .\wap.ps1 profile capture enable <profile> <captureId>
+  .\wap.ps1 profile capture disable <profile> <captureId>
   .\wap.ps1 profile capture remove <profile> <captureId> [-WhatIf]
   .\wap.ps1 profile capture copy <fromProfile> <captureId> <toProfile> [--id <id>] [--name <name>] [--description <text>]
   .\wap.ps1 profile capture edit <profile> <captureId> [--name <name>] [--description <text>]
@@ -3928,7 +4253,7 @@ function Invoke-WapCli {
                 '.\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all]',
                 '.\wap.ps1 profile delete <name>',
                 '.\wap.ps1 profile winget <add|list|remove> ...',
-                '.\wap.ps1 profile capture <add|list|remove|copy|edit|refresh|versions|select-version|merge> ...'
+                '.\wap.ps1 profile capture <add|list|enable|disable|remove|copy|edit|refresh|versions|select-version|merge> ...'
             )
             if (Test-WapCliMissingToken -Arguments $argsList) {
                 throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 profile' -Completions $profileCompletions)
@@ -3939,6 +4264,8 @@ function Invoke-WapCli {
                     throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 profile winget' -Completions @(
                         '.\wap.ps1 profile winget add <profile> <packageId> [--source <source>]',
                         '.\wap.ps1 profile winget list <profile>',
+                        '.\wap.ps1 profile winget enable <profile> <packageId> [--source <source>]',
+                        '.\wap.ps1 profile winget disable <profile> <packageId> [--source <source>]',
                         '.\wap.ps1 profile winget remove <profile> <packageId> [--source <source>] [-WhatIf]'
                     ))
                 }
@@ -3955,6 +4282,22 @@ function Invoke-WapCli {
                         if ($argsList.Count -ne 3) { throw 'Usage: .\wap.ps1 profile winget list <profile>' }
                         Show-WapProfileWingetPackages -ProfileName $argsList[2] -RepositoryRoot $RepositoryRoot
                     }
+                    'enable' {
+                        if ($argsList.Count -lt 4) { throw 'Usage: .\wap.ps1 profile winget enable <profile> <packageId> [--source <source>]' }
+                        Set-WapProfileWingetPackageEnabled -ProfileName $argsList[2] `
+                            -PackageId $argsList[3] `
+                            -RepositoryRoot $RepositoryRoot `
+                            -Enabled $true `
+                            -Source (Get-WapCliOption -Arguments $argsList -Name 'source')
+                    }
+                    'disable' {
+                        if ($argsList.Count -lt 4) { throw 'Usage: .\wap.ps1 profile winget disable <profile> <packageId> [--source <source>]' }
+                        Set-WapProfileWingetPackageEnabled -ProfileName $argsList[2] `
+                            -PackageId $argsList[3] `
+                            -RepositoryRoot $RepositoryRoot `
+                            -Enabled $false `
+                            -Source (Get-WapCliOption -Arguments $argsList -Name 'source')
+                    }
                     'remove' {
                         if ($argsList.Count -lt 4) { throw 'Usage: .\wap.ps1 profile winget remove <profile> <packageId> [--source <source>] [-WhatIf]' }
                         Remove-WapProfileWingetPackage -ProfileName $argsList[2] `
@@ -3967,6 +4310,8 @@ function Invoke-WapCli {
                         throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 profile winget' -UnknownToken ([string]$wingetAction) -Completions @(
                             '.\wap.ps1 profile winget add <profile> <packageId> [--source <source>]',
                             '.\wap.ps1 profile winget list <profile>',
+                            '.\wap.ps1 profile winget enable <profile> <packageId> [--source <source>]',
+                            '.\wap.ps1 profile winget disable <profile> <packageId> [--source <source>]',
                             '.\wap.ps1 profile winget remove <profile> <packageId> [--source <source>] [-WhatIf]'
                         ))
                     }
@@ -3978,6 +4323,8 @@ function Invoke-WapCli {
                     throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 profile capture' -Completions @(
                         '.\wap.ps1 profile capture add <profile> <capture> [--id <id>] [--name <name>] [--description <text>]',
                         '.\wap.ps1 profile capture list <profile>',
+                        '.\wap.ps1 profile capture enable <profile> <captureId>',
+                        '.\wap.ps1 profile capture disable <profile> <captureId>',
                         '.\wap.ps1 profile capture remove <profile> <captureId> [-WhatIf]',
                         '.\wap.ps1 profile capture copy <fromProfile> <captureId> <toProfile> [--id <id>] [--name <name>] [--description <text>]',
                         '.\wap.ps1 profile capture edit <profile> <captureId> [--name <name>] [--description <text>]',
@@ -4003,6 +4350,14 @@ function Invoke-WapCli {
                     'list' {
                         if ($argsList.Count -ne 3) { throw 'Usage: .\wap.ps1 profile capture list <profile>' }
                         Show-WapProfileCaptures -ProfileName $argsList[2] -RepositoryRoot $RepositoryRoot
+                    }
+                    'enable' {
+                        if ($argsList.Count -ne 4) { throw 'Usage: .\wap.ps1 profile capture enable <profile> <captureId>' }
+                        Set-WapProfileCaptureEnabled -ProfileName $argsList[2] -CaptureId $argsList[3] -RepositoryRoot $RepositoryRoot -Enabled $true
+                    }
+                    'disable' {
+                        if ($argsList.Count -ne 4) { throw 'Usage: .\wap.ps1 profile capture disable <profile> <captureId>' }
+                        Set-WapProfileCaptureEnabled -ProfileName $argsList[2] -CaptureId $argsList[3] -RepositoryRoot $RepositoryRoot -Enabled $false
                     }
                     'remove' {
                         if ($argsList.Count -lt 4) { throw 'Usage: .\wap.ps1 profile capture remove <profile> <captureId> [-WhatIf]' }
@@ -4060,6 +4415,8 @@ function Invoke-WapCli {
                         throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 profile capture' -UnknownToken ([string]$captureAction) -Completions @(
                             '.\wap.ps1 profile capture add <profile> <capture> [--id <id>] [--name <name>] [--description <text>]',
                             '.\wap.ps1 profile capture list <profile>',
+                            '.\wap.ps1 profile capture enable <profile> <captureId>',
+                            '.\wap.ps1 profile capture disable <profile> <captureId>',
                             '.\wap.ps1 profile capture remove <profile> <captureId> [-WhatIf]',
                             '.\wap.ps1 profile capture copy <fromProfile> <captureId> <toProfile> [--id <id>] [--name <name>] [--description <text>]',
                             '.\wap.ps1 profile capture edit <profile> <captureId> [--name <name>] [--description <text>]',
@@ -4191,8 +4548,10 @@ Export-ModuleMember -Function @(
     'Uninstall-WapProfile',
     'Show-WapProfile',
     'Add-WapProfileWingetPackage',
+    'Set-WapProfileWingetPackageEnabled',
     'Show-WapProfileWingetPackages',
     'Remove-WapProfileWingetPackage',
+    'Set-WapProfileCaptureEnabled',
     'Remove-WapProfileDefinition',
     'Remove-WapCaptureSession',
     'Rename-WapCaptureSession',
