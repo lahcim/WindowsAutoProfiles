@@ -1,0 +1,21 @@
+# Captured 2026-07-03T17:06:45.6105420-07:00
+name: electronics
+apps:
+  - id: ArduinoSA.IDE.stable
+    source: winget
+    enabled: true
+  - id: KiCad.KiCad
+    source: winget
+    enabled: true
+env:
+  WAP_PROFILE: electronics
+path:
+  - ${profileRoot}\Apps\bin
+projects: ${profileRoot}\Projects
+data: ${profileRoot}\Data
+downloads: ${profileRoot}\Downloads
+cache: ${profileRoot}\Cache
+shortcuts:
+  # - name: Example
+  #   target: ${profileRoot}\Apps\Example.exe
+captures:
