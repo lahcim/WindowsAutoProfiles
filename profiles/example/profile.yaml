@@ -1,0 +1,23 @@
+# Copy this directory and rename it to create a profile.
+name: example
+
+apps:
+  - id: Git.Git
+  - id: Microsoft.VisualStudioCode
+
+env:
+  WAP_PROFILE: example
+  WAP_CONFIG_HOME: ${profileRoot}\Config
+
+path:
+  - ${profileRoot}\Apps\bin
+  - ${sharedRoot}\bin
+
+projects: ${profileRoot}\Projects
+data: ${profileRoot}\Data
+downloads: ${profileRoot}\Downloads
+cache: ${profileRoot}\Cache
+
+shortcuts:
+  # - name: Visual Studio Code
+  #   target: ${sharedRoot}\VSCode\Code.exe

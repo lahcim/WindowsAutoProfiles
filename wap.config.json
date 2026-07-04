@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "workspaceRoot": "C:\\work\\Workspaces",
+  "logging": {
+    "enabled": true,
+    "retentionDays": 30
+  }
+}

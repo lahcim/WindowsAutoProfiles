@@ -1,0 +1,623 @@
+# Usage and command reference
+
+This document describes the WindowsAutoProfiles command line, profile schema,
+and expected command output.
+
+Version: 1.1
+
+Last updated: 2026-07-04T02:24:12Z
+
+Author: Michal Zygmunt <lahcim@fajne.com>
+
+Run all commands from the repository root:
+
+```powershell
+Set-Location C:\src\WindowsAutoProfiles
+```
+
+## Command overview
+
+Minimum PowerShell for all commands is **5.1**. The CLI validates this before
+dispatching each command.
+
+```text
+.\wap.ps1 init
+.\wap.ps1 config show
+.\wap.ps1 config set workspaceRoot <path> [-WhatIf]
+.\wap.ps1 config set logging.enabled <true|false> [-WhatIf]
+.\wap.ps1 config set logging.retentionDays <days> [-WhatIf]
+.\wap.ps1 logs cleanup [-WhatIf]
+
+.\wap.ps1 profile install <name> [-WhatIf]
+.\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]
+.\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all] [-WhatIf]
+.\wap.ps1 profile activate <name> [-WhatIf]
+.\wap.ps1 profile deactivate <name> [-WhatIf]
+.\wap.ps1 profile delete <name> [-WhatIf]
+.\wap.ps1 profile status
+.\wap.ps1 profile list
+
+.\wap.ps1 profile capture add <profile> <capture> [--id <id>] [--name <name>] [--description <text>]
+.\wap.ps1 profile capture list <profile>
+.\wap.ps1 profile capture remove <profile> <captureId> [-WhatIf]
+.\wap.ps1 profile capture copy <fromProfile> <captureId> <toProfile> [--id <id>] [--name <name>] [--description <text>]
+.\wap.ps1 profile capture edit <profile> <captureId> [--name <name>] [--description <text>]
+
+.\wap.ps1 capture new <name>
+.\wap.ps1 capture start <name> [-WhatIf]
+.\wap.ps1 capture list
+.\wap.ps1 capture rename <name> <newName> [-WhatIf]
+.\wap.ps1 capture validate <name>
+.\wap.ps1 capture diff <name>
+.\wap.ps1 capture applyfilter <name>
+.\wap.ps1 capture remove <name> [-WhatIf]
+```
+
+All commands accept the global `--no-log` option to skip log generation for
+that invocation:
+
+```powershell
+.\wap.ps1 profile status --no-log
+```
+
+## PowerShell and administrator requirements
+
+| Command area | Minimum PowerShell | Administrator required | Notes |
+|---|---:|---|---|
+| `init`, `config`, `profile status/list` | 5.1 | No | Repository-local operations. |
+| `profile install` | 5.1 | Usually no | WAP itself does not require elevation; individual WinGet installers may prompt or elevate. |
+| `profile activate/deactivate` | 5.1 | No | Writes current-user environment variables and PATH, plus current process environment. |
+| `profile uninstall/delete` | 5.1 | No by default | Preserves workspace data and captured registry keys unless explicit cleanup flags are used. Package uninstallers may prompt independently. |
+| `profile uninstall --remove-registry`, `profile cleanup --registry` | 5.1 | Only when HKLM keys are eligible | Tries Windows `sudo.exe` first for machine-wide HKLM registry cleanup; otherwise prints the exact elevated command. |
+| `capture start/list/rename/validate/diff/applyfilter/remove` | 5.1 | No on host | `capture start` launches Sandbox and generates scripts. |
+| `logs cleanup` | 5.1 | No | Removes generated `.logs\*.log` files except the current command log. |
+| `Capture-Baseline.ps1` inside Sandbox | 5.1 | Yes | Tries `sudo.exe` first when not elevated; otherwise prints the exact elevated command. |
+| `Capture-Finalize.ps1` inside Sandbox | 5.1 | Yes | Tries `sudo.exe` first when not elevated; otherwise prints the exact elevated command. |
+
+If a Sandbox capture script is not elevated and Windows `sudo.exe` is not
+available, the error includes a command like:
+
+```text
+powershell.exe -ExecutionPolicy Bypass -File "C:\WAPCapture\Capture-Finalize.ps1"
+```
+
+Run that command from an elevated PowerShell session inside Sandbox.
+
+## Configuration
+
+`wap.config.json` controls where workspaces are created on the local machine.
+It also controls command logging.
+
+```json
+{
+  "version": 1,
+  "workspaceRoot": "%USERPROFILE%\\Workspaces",
+  "logging": {
+    "enabled": true,
+    "retentionDays": 30
+  }
+}
+```
+
+WAP expands environment variables and derives:
+
+```text
+profileRoot = workspaceRoot\<profileName>
+sharedRoot  = workspaceRoot\_Shared
+```
+
+### Initialize the repository
+
+```powershell
+.\wap.ps1 init
+```
+
+Example output:
+
+```text
+WindowsAutoProfiles initialized at 'C:\src\WindowsAutoProfiles'.
+```
+
+`init` creates `wap.config.json` only when it is absent. It does not overwrite
+existing configuration.
+
+### Show configuration
+
+```powershell
+.\wap.ps1 config show
+```
+
+Example output:
+
+```text
+Config path: C:\src\WindowsAutoProfiles\wap.config.json
+workspaceRoot: C:\Users\me\Workspaces
+LoggingEnabled: True
+LoggingRetentionDays: 30
+LogRoot: C:\src\WindowsAutoProfiles\.logs
+```
+
+### Set workspace root
+
+```powershell
+.\wap.ps1 config set workspaceRoot C:\Workspaces
+```
+
+### Configure logging
+
+Command logging is enabled by default. Logs are written under `.logs\` with a
+UTC timestamp in the file name. Failed commands print the log path so users can
+attach the file to a GitHub issue.
+
+Disable generated logs globally:
+
+```powershell
+.\wap.ps1 config set logging.enabled false
+```
+
+Enable logs again:
+
+```powershell
+.\wap.ps1 config set logging.enabled true
+```
+
+Set automatic retention to 14 days:
+
+```powershell
+.\wap.ps1 config set logging.retentionDays 14
+```
+
+Disable automatic deletion by setting retention to `0`:
+
+```powershell
+.\wap.ps1 config set logging.retentionDays 0
+```
+
+Clean all generated logs manually:
+
+```powershell
+.\wap.ps1 logs cleanup
+```
+
+Preview cleanup:
+
+```powershell
+.\wap.ps1 logs cleanup -WhatIf
+```
+
+Example output:
+
+```text
+workspaceRoot set to 'C:\Workspaces'.
+```
+
+Use `-WhatIf` to preview:
+
+```powershell
+.\wap.ps1 config set workspaceRoot D:\Profiles -WhatIf
+```
+
+## Profile schema
+
+Profiles live under `profiles\<name>\profile.yaml`.
+
+Example:
+
+```yaml
+name: developer
+
+apps:
+  - id: Git.Git
+  - id: Microsoft.VisualStudioCode
+  - id: Microsoft.PowerShell
+
+env:
+  WAP_PROFILE: developer
+  WAP_CONFIG_HOME: ${profileRoot}\Config
+
+path:
+  - ${profileRoot}\Apps\bin
+  - ${sharedRoot}\bin
+
+projects: ${profileRoot}\Projects
+data: ${profileRoot}\Data
+downloads: ${profileRoot}\Downloads
+cache: ${profileRoot}\Cache
+
+shortcuts:
+  - name: Developer Tools
+    target: ${profileRoot}\Apps\Tools\DeveloperTools.exe
+```
+
+Supported substitutions:
+
+| Placeholder | Meaning |
+|---|---|
+| `${workspaceRoot}` | Configured workspace root |
+| `${profileRoot}` | Workspace folder for this profile |
+| `${sharedRoot}` | Shared workspace folder |
+| `${profileName}` | Current profile name |
+
+Normal Windows `%ENVIRONMENT_VARIABLE%` references are also expanded.
+
+## Profile lifecycle
+
+### Install a profile
+
+```powershell
+.\wap.ps1 profile install developer
+```
+
+Example output:
+
+```text
+Installing profile 'developer'...
+  Profile root: C:\Workspaces\developer
+  Shared root:  C:\Workspaces\_Shared
+  Directories:
+    [create] C:\Workspaces\_Shared
+    [create] C:\Workspaces\developer
+    [create] C:\Workspaces\developer\Projects
+    [create] C:\Workspaces\developer\Data
+    [create] C:\Workspaces\developer\Downloads
+    [create] C:\Workspaces\developer\Cache
+  Packages: 3 declared
+    [check] Git.Git
+    [installed] Git.Git
+    [check] Microsoft.VisualStudioCode
+    [ready] Microsoft.VisualStudioCode is already installed
+    [check] Microsoft.PowerShell
+    [installed] Microsoft.PowerShell
+  Shortcuts: 1 declared
+    [create] Developer Tools
+  State saved.
+Done: profile 'developer' installed.
+```
+
+Install creates directories, installs packages, creates shortcuts, and records
+ownership in `.wap-state.json`. It does not activate user environment variables.
+
+Preview first:
+
+```powershell
+.\wap.ps1 profile install developer -WhatIf
+```
+
+### Activate a profile
+
+```powershell
+.\wap.ps1 profile activate developer
+```
+
+Example output:
+
+```text
+Activating profile 'developer'...
+  Profile root: C:\Workspaces\developer
+  Environment variables: 2 declared
+    [set] WAP_PROFILE
+    [set] WAP_CONFIG_HOME
+  PATH fragments: 2 declared
+    [add] C:\Workspaces\developer\Apps\bin
+    [add] C:\Workspaces\_Shared\bin
+  State saved.
+Done: profile 'developer' activated. Open a new terminal for other processes to see user environment changes.
+```
+
+Activation sets user-level environment variables and user PATH entries. It also
+updates the current PowerShell process so this terminal can use them
+immediately. Already-running applications usually need to be restarted.
+
+If another profile is active, WAP deactivates it first.
+
+### Deactivate a profile
+
+```powershell
+.\wap.ps1 profile deactivate developer
+```
+
+Example output:
+
+```text
+Deactivating profile 'developer'...
+  Environment variables: 2 owned
+    [restore] WAP_PROFILE
+    [restore] WAP_CONFIG_HOME
+  PATH fragments: 2 owned
+    [remove] C:\Workspaces\developer\Apps\bin
+    [remove] C:\Workspaces\_Shared\bin
+  State saved.
+Done: profile 'developer' deactivated.
+```
+
+Deactivation restores variables only when they still match the value WAP
+applied. If a variable changed after activation, WAP warns and leaves it alone.
+
+### Uninstall a profile
+
+```powershell
+.\wap.ps1 profile uninstall developer
+```
+
+If the profile is active, uninstall automatically deactivates it first:
+
+```text
+Uninstalling profile 'developer'...
+  Profile root: C:\Workspaces\developer
+  Profile is active; deactivating it first.
+Deactivating profile 'developer'...
+  Environment variables: 2 owned
+    [restore] WAP_PROFILE
+    [restore] WAP_CONFIG_HOME
+  PATH fragments: 2 owned
+    [remove] C:\Workspaces\developer\Apps\bin
+    [remove] C:\Workspaces\_Shared\bin
+  State saved.
+Done: profile 'developer' deactivated.
+```
+
+Uninstall then removes WAP-owned shortcuts and package ownership. By default,
+it preserves workspace directories, user data, and captured registry keys:
+
+```text
+  [keep] Registry cleanup disabled. Use --remove-registry to delete added registry keys from attached captures.
+  [keep] Workspace directories and user data under 'C:\Workspaces\developer'. Use --remove-user-data to delete them.
+```
+
+Use explicit destructive flags when you want a full cleanup as part of uninstall:
+
+```powershell
+.\wap.ps1 profile uninstall developer --remove-user-data --remove-registry
+```
+
+`--remove-user-data` deletes the profile workspace directory, for example
+`C:\Workspaces\developer`. It does not delete the shared workspace
+`C:\Workspaces\_Shared`.
+
+`--remove-registry` deletes only registry keys that attached capture manifests
+recorded as **Added** and that pass WAP's safety filter. Changed registry keys
+are not deleted. Broad Windows keys such as `HKLM\Software\Microsoft\Windows`
+and `HKCU\Software\Classes\Applications` are skipped. If eligible HKLM keys
+remain, WAP tries Windows `sudo.exe`; if sudo is unavailable, it prints the
+exact command to rerun from an elevated PowerShell session.
+
+If a profile has already been uninstalled and you later want to remove leftover
+workspace data or attached-capture registry keys, use:
+
+```powershell
+.\wap.ps1 profile cleanup developer --user-data --registry
+```
+
+Or remove both with:
+
+```powershell
+.\wap.ps1 profile cleanup developer --all
+```
+
+Preview destructive cleanup first:
+
+```powershell
+.\wap.ps1 profile cleanup developer --all -WhatIf
+```
+
+### Delete a profile definition
+
+```powershell
+.\wap.ps1 profile delete developer
+```
+
+`profile delete` removes `profiles\<name>\` only when the profile is not
+installed. It preserves workspace data and `.capture` history.
+
+### Show profile status
+
+```powershell
+.\wap.ps1 profile status
+```
+
+Example output:
+
+```text
+Workspace root:  C:\Workspaces
+Active profile: developer
+Installed:      1
+
+Name       Installed Status        ProfileRoot
+----       --------- ------        -----------
+developer       True Active        C:\Workspaces\developer
+example        False Not installed C:\Workspaces\example
+```
+
+`profile list` is an alias for the same status view.
+
+## Standalone captures
+
+Standalone captures are raw Windows Sandbox capture sessions under:
+
+```text
+.capture\<name>\
+```
+
+They can be listed, renamed, validated, filtered, attached to profiles, and
+removed.
+
+### Start a capture
+
+```powershell
+.\wap.ps1 capture start kicad
+```
+
+Example output:
+
+```text
+Starting interactive capture for profile 'kicad'...
+  Host capture root: C:\src\WindowsAutoProfiles\.capture\kicad
+  [created] baseline/
+  [created] after/
+  [created] output/
+  [generated] Capture-Common.ps1
+  [generated] Capture-Baseline.ps1
+  [generated] Capture-Finalize.ps1
+  [generated] capture-filters.json
+  [generated] sandbox.wsb
+  [launch] Windows Sandbox
+Sandbox launched.
+Waiting for Sandbox baseline to finish (timeout: 900 seconds)...
+
+=== BASELINE READY ===
+Sandbox user: WIN11-SANDBOX\WDAGUtilityAccount
+Sandbox profile: C:\Users\WDAGUtilityAccount
+
+Inside Sandbox, finalize with:
+  powershell.exe -ExecutionPolicy Bypass -File C:\WAPCapture\Capture-Finalize.ps1
+```
+
+The Sandbox baseline and finalize scripts require administrator rights. If they
+are not elevated, they try Windows `sudo.exe` first. If sudo is unavailable,
+they stop with the exact command to paste into an elevated Sandbox PowerShell
+window.
+
+### List captures
+
+```powershell
+.\wap.ps1 capture list
+```
+
+Example output:
+
+```text
+Standalone capture root: C:\src\WindowsAutoProfiles\.capture
+
+Name  Status        CreatedAt            Path
+----  ------        ---------            ----
+kicad Finalized     2026-07-04T01:16:54Z C:\src\WindowsAutoProfiles\.capture\kicad
+tools BaselineReady 2026-07-04T02:20:11Z C:\src\WindowsAutoProfiles\.capture\tools
+```
+
+### Rename a capture
+
+```powershell
+.\wap.ps1 capture rename kicad electronics-kicad
+```
+
+Example output:
+
+```text
+Renaming capture session 'kicad' to 'electronics-kicad'...
+  [from] C:\src\WindowsAutoProfiles\.capture\kicad
+  [to]   C:\src\WindowsAutoProfiles\.capture\electronics-kicad
+Done: capture session 'kicad' renamed to 'electronics-kicad'.
+```
+
+### Validate or inspect a capture
+
+```powershell
+.\wap.ps1 capture validate electronics-kicad
+.\wap.ps1 capture diff electronics-kicad
+```
+
+Example summary:
+
+```text
+Capture 'electronics-kicad' manifest validated.
+Capture diff for 'electronics-kicad'
+  Added files:                 30645
+  Filtered file noise:         1847
+  Changed registry keys:       76
+  Filtered registry noise:     511
+  New services:                0
+  New shortcuts:               8
+  Suspected uninstall commands: 3
+  Filtered uninstall noise:    1
+  Safety: nothing was deleted and no MSIX was generated.
+```
+
+### Reapply filters
+
+```powershell
+.\wap.ps1 capture applyfilter electronics-kicad
+```
+
+This reapplies `capture-filters.json` to an existing manifest and saves a
+backup named `capture-manifest.before-applyfilter.json`.
+
+### Remove a capture
+
+```powershell
+.\wap.ps1 capture remove electronics-kicad
+```
+
+Example output:
+
+```text
+Deleting capture session 'electronics-kicad'...
+  [delete] C:\src\WindowsAutoProfiles\.capture\electronics-kicad
+  [keep] Profile definitions, workspace data, and WAP state are not touched.
+Done: capture session 'electronics-kicad' deleted.
+```
+
+## Profile-attached captures
+
+Attach a standalone capture to a profile:
+
+```powershell
+.\wap.ps1 profile capture add electronics electronics-kicad --id kicad --name "KiCad" --description "KiCad and user settings"
+```
+
+This copies the capture manifest into:
+
+```text
+profiles\electronics\captures\kicad\
+```
+
+The attached capture contains:
+
+```text
+capture-manifest.json
+capture-filters.json
+metadata.json
+```
+
+List attached captures:
+
+```powershell
+.\wap.ps1 profile capture list electronics
+```
+
+Example output:
+
+```text
+id    name  createdAt            addedAt                       description
+--    ----  ---------            -------                       -----------
+kicad KiCad 2026-07-04T01:16:54Z 2026-07-04T02:07:47.6425615Z KiCad and user settings
+```
+
+Edit metadata:
+
+```powershell
+.\wap.ps1 profile capture edit electronics kicad --name "KiCad 10" --description "KiCad 10 per-user install and shortcuts"
+```
+
+Copy a capture to another profile:
+
+```powershell
+.\wap.ps1 profile capture copy electronics kicad developer --id kicad
+```
+
+Remove a capture from a profile:
+
+```powershell
+.\wap.ps1 profile capture remove electronics kicad
+```
+
+This removes only the attached copy under `profiles\<profile>\captures\<id>\`.
+It does not delete the standalone `.capture\<name>\` session.
+
+## Legacy package-list capture
+
+```powershell
+.\wap.ps1 capture new developer
+```
+
+This creates a profile YAML from currently installed WinGet packages. It is a
+simple package-list capture and does not use Windows Sandbox.
