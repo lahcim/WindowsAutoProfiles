@@ -17,6 +17,21 @@ apps:
   - id: Python.Python.3.13
     source: winget
     enabled: true
+  - id: GitHub.cli
+    source: winget
+    enabled: true
+  - id: GitHub.Copilot
+    source: winget
+    enabled: true
+  - id: OpenAI.Codex
+    source: winget
+    enabled: true
+  - id: Anthropic.ClaudeCode
+    source: winget
+    enabled: true
+  - id: Anysphere.Cursor
+    source: winget
+    enabled: false
 env:
   WAP_PROFILE: developer
 path:
