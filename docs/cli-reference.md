@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T06:56:18Z
+Last updated: 2026-07-04T07:15:58Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -15,9 +15,22 @@ repository root unless stated otherwise.
 |---|---|
 | `.\wap.ps1 --help` | Print the built-in help text. |
 | `.\wap.ps1 --examples` | Print `docs\examples.md`. |
+| `.\wap.ps1 install <github-profile-url> [-WhatIf]` | Initialize WAP if needed, download a GitHub profile folder to temporary storage, install and activate it, and remove the temporary files. |
 | `.\wap.ps1 init [--skip-prereqs] [-WhatIf]` | Create config/state folders and files. By default, also checks or installs prerequisites such as WinGet. |
 | `--no-log` | Global option accepted by every command to disable command logging for that invocation. |
 | `-WhatIf` | Supported by mutating commands that create, delete, install, or rewrite files/config. |
+
+Quick-install URLs use GitHub's folder view format:
+
+```powershell
+.\wap.ps1 install https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+```
+
+The accepted shape is:
+
+```text
+https://github.com/<owner>/<repo>/tree/<branch>/<path-to-profile-folder>
+```
 
 ## Configuration commands
 
@@ -42,6 +55,7 @@ repository root unless stated otherwise.
 | `.\wap.ps1 profile list` | Alias for `profile status`. |
 | `.\wap.ps1 profile show <name>` | Show one profile's definition path, roots, WinGet packages, attached captures, and unreferenced capture folders. |
 | `.\wap.ps1 profile new <name> [-WhatIf]` | Create a starter `<profilesRoot>\<name>\profile.yaml`. |
+| `.\wap.ps1 profile download <name> <github-profile-url> [-WhatIf]` | Download a GitHub profile folder into the configured `profilesRoot` using the supplied local profile name. |
 | `.\wap.ps1 profile install <name> [-WhatIf]` | Create directories, install enabled profile and capture-owned WinGet packages, create shortcuts, and save install state. |
 | `.\wap.ps1 profile install <name> --sandbox [-WhatIf]` | Launch a disposable Windows Sandbox profile-install test and leave it open for manual lifecycle testing. |
 | `.\wap.ps1 profile activate <name> [-WhatIf]` | Apply the profile's user environment variables and PATH fragments. |

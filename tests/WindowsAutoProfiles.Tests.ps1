@@ -187,6 +187,116 @@ Describe 'state, init, and capture' {
         Remove-Variable -Name wingetChecks -Scope Global -ErrorAction SilentlyContinue
     }
 
+    It 'quick installs a GitHub profile URL and initializes first when needed' {
+        $repo = Join-Path $TestDrive 'quick-install'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        $global:quickInstallReference = $null
+        $global:quickInstallName = $null
+        $global:quickInstallActivatedName = $null
+        $global:quickInstallProfilesRoot = $null
+        Mock Test-WapWingetAvailable { $true } -ModuleName WindowsAutoProfiles
+        Mock Save-WapGitHubProfileDefinition {
+            param($Reference, [string] $ProfilesRoot)
+            $global:quickInstallReference = $Reference
+            $global:quickInstallProfilesRoot = $ProfilesRoot
+            $target = Join-Path $ProfilesRoot $Reference.name
+            New-Item -ItemType Directory -Path $target -Force | Out-Null
+            @(
+                "name: $($Reference.name)"
+                'apps:'
+            ) | Set-Content -LiteralPath (Join-Path $target 'profile.yaml') -Encoding UTF8
+            return $target
+        } -ModuleName WindowsAutoProfiles
+        Mock Install-WapProfile {
+            param([string] $Name, [string] $RepositoryRoot)
+            $global:quickInstallName = $Name
+            [Environment]::GetEnvironmentVariable('WAP_PROFILES_ROOT_OVERRIDE', 'Process') | Should Be $global:quickInstallProfilesRoot
+        } -ModuleName WindowsAutoProfiles
+        Mock Enable-WapProfile {
+            param([string] $Name, [string] $RepositoryRoot)
+            $global:quickInstallActivatedName = $Name
+            [Environment]::GetEnvironmentVariable('WAP_PROFILES_ROOT_OVERRIDE', 'Process') | Should Be $global:quickInstallProfilesRoot
+        } -ModuleName WindowsAutoProfiles
+
+        Invoke-WapCli -Command install -Arguments @('https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics') -RepositoryRoot $repo
+
+        (Join-Path $repo 'wap.config.json') | Should Exist
+        (Join-Path $repo '.wap-state.json') | Should Exist
+        $global:quickInstallReference.owner | Should Be 'lahcim'
+        $global:quickInstallReference.repo | Should Be 'WindowsAutoProfiles'
+        $global:quickInstallReference.ref | Should Be 'main'
+        $global:quickInstallReference.path | Should Be 'profiles/electronics'
+        $global:quickInstallReference.name | Should Be 'electronics'
+        $global:quickInstallName | Should Be 'electronics'
+        $global:quickInstallActivatedName | Should Be 'electronics'
+        $global:quickInstallProfilesRoot | Should Not Be (Join-Path $repo 'profiles')
+        [Environment]::GetEnvironmentVariable('WAP_PROFILES_ROOT_OVERRIDE', 'Process') | Should Be $null
+        (Join-Path $repo 'profiles/electronics/profile.yaml') | Should Not Exist
+    }
+
+    It 'previews quick install without initializing or downloading' {
+        $repo = Join-Path $TestDrive 'quick-install-whatif'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Mock Save-WapGitHubProfileDefinition { throw 'download should not run during WhatIf' } -ModuleName WindowsAutoProfiles
+        Mock Install-WapProfile { throw 'install should not run during WhatIf' } -ModuleName WindowsAutoProfiles
+        Mock Enable-WapProfile { throw 'activate should not run during WhatIf' } -ModuleName WindowsAutoProfiles
+
+        $output = (Invoke-WapCli -Command install -Arguments @('https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics', '-WhatIf') -RepositoryRoot $repo *>&1 | Out-String)
+
+        (Join-Path $repo 'wap.config.json') | Should Not Exist
+        $output | Should Match 'Would initialize WindowsAutoProfiles'
+        $output | Should Match 'profiles/electronics'
+        $output | Should Match "Would install profile 'electronics'"
+        $output | Should Match "Would activate profile 'electronics'"
+        Remove-Variable -Name quickInstallReference -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name quickInstallName -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name quickInstallActivatedName -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name quickInstallProfilesRoot -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It 'downloads a remote profile definition to the configured profiles root' {
+        $repo = Join-Path $TestDrive 'profile-download'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        $global:downloadReference = $null
+        $global:downloadProfilesRoot = $null
+        $global:downloadTargetName = $null
+        Mock Save-WapGitHubProfileDefinition {
+            param($Reference, [string] $ProfilesRoot, [string] $TargetName, [switch] $Force)
+            $global:downloadReference = $Reference
+            $global:downloadProfilesRoot = $ProfilesRoot
+            $global:downloadTargetName = $TargetName
+            $target = Join-Path $ProfilesRoot $TargetName
+            New-Item -ItemType Directory -Path $target -Force | Out-Null
+            @(
+                "name: $TargetName"
+                'apps:'
+            ) | Set-Content -LiteralPath (Join-Path $target 'profile.yaml') -Encoding UTF8
+            return $target
+        } -ModuleName WindowsAutoProfiles
+
+        Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics') -RepositoryRoot $repo
+
+        $global:downloadReference.name | Should Be 'electronics'
+        $global:downloadProfilesRoot | Should Be (Join-Path $repo 'profiles')
+        $global:downloadTargetName | Should Be 'bench'
+        Remove-Variable -Name downloadReference -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name downloadProfilesRoot -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name downloadTargetName -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It 'previews remote profile download without downloading' {
+        $repo = Join-Path $TestDrive 'profile-download-whatif'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        Mock Save-WapGitHubProfileDefinition { throw 'download should not run during WhatIf' } -ModuleName WindowsAutoProfiles
+
+        $output = (Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics', '-WhatIf') -RepositoryRoot $repo *>&1 | Out-String)
+
+        $output | Should Match "Would download profile 'bench'"
+        $output | Should Match ([regex]::Escape((Join-Path $repo 'profiles\bench')))
+    }
+
     It 'supports an external full config and external profilesRoot with runtime environment expansion' {
         $repo = Join-Path $TestDrive 'external-config'
         $configDirectory = Join-Path $TestDrive 'external-config-store'

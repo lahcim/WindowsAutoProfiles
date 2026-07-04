@@ -7,7 +7,7 @@ configuration discovered in Windows Sandbox.
 
 Version: 1.1
 
-Last updated: 2026-07-04T06:56:18Z
+Last updated: 2026-07-04T07:21:54Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -16,6 +16,35 @@ packages, folders, shortcuts, user environment variables, and profile-specific
 `PATH` entries on a Windows machine. WAP also includes a Windows Sandbox capture
 workflow for explicitly recording non-WinGet installers and configuration
 changes, then attaching that captured evidence to profiles.
+
+## Fastest path: install a profile from GitHub
+
+### 1. One-time direct install
+
+```powershell
+.\wap.ps1 install https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+```
+
+This initializes WAP if needed, checks prerequisites, downloads the remote
+profile to a temporary folder, installs it, activates it, and removes the
+temporary files. It does **not** save the profile definition locally.
+
+### 2. Download first, then install locally
+
+```powershell
+.\wap.ps1 profile download electronics https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+.\wap.ps1 profile install electronics
+.\wap.ps1 profile activate electronics
+```
+
+This downloads the profile into your configured `profilesRoot` as
+`electronics`, so you can review or edit it before installing it by local name.
+
+Use GitHub folder URLs in this format:
+
+```text
+https://github.com/<owner>/<repo>/tree/<branch>/<path-to-profile-folder>
+```
 
 ## Why use WAP?
 
@@ -303,6 +332,7 @@ Run `.\wap.ps1 --help` for the authoritative command list. Current commands:
 ```powershell
 .\wap.ps1 --help
 .\wap.ps1 --examples
+.\wap.ps1 install https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
 .\wap.ps1 init
 .\wap.ps1 init --skip-prereqs
 .\wap.ps1 config show
@@ -320,6 +350,7 @@ Run `.\wap.ps1 --help` for the authoritative command list. Current commands:
 .\wap.ps1 profile list
 .\wap.ps1 profile show developer
 .\wap.ps1 profile new developer
+.\wap.ps1 profile download electronics https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
 .\wap.ps1 profile install developer -WhatIf
 .\wap.ps1 profile install developer --sandbox
 .\wap.ps1 profile install developer
@@ -363,6 +394,17 @@ Run `.\wap.ps1 --help` for the authoritative command list. Current commands:
 
 Most mutating commands support `-WhatIf`; every command supports the global
 `--no-log` option.
+
+Use `install <url>` when you want a one-shot remote install that does not save
+the profile definition locally. Use `profile download <name> <url>` when you
+want to persist the remote profile under your configured `profilesRoot` first,
+review or edit it, and install it later:
+
+```powershell
+.\wap.ps1 profile download electronics https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+.\wap.ps1 profile install electronics
+.\wap.ps1 profile activate electronics
+```
 
 Use `profile install <name> --sandbox` to open a disposable Windows Sandbox
 that installs one profile first, then remains open for manual

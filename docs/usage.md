@@ -5,7 +5,7 @@ and expected command output.
 
 Version: 1.1
 
-Last updated: 2026-07-04T06:56:18Z
+Last updated: 2026-07-04T07:15:58Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -24,6 +24,7 @@ dispatching each command.
 .\wap.ps1 init [--skip-prereqs] [-WhatIf]
 .\wap.ps1 --help
 .\wap.ps1 --examples
+.\wap.ps1 install <github-profile-url> [-WhatIf]
 .\wap.ps1 config show
 .\wap.ps1 config set bootstrapConfigPath <path> [-WhatIf]
 .\wap.ps1 config set configPath <path> [-WhatIf]
@@ -39,6 +40,7 @@ dispatching each command.
 .\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]
 .\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all] [-WhatIf]
 .\wap.ps1 profile new <name> [-WhatIf]
+.\wap.ps1 profile download <name> <github-profile-url> [-WhatIf]
 .\wap.ps1 profile activate <name> [-WhatIf]
 .\wap.ps1 profile deactivate <name> [-WhatIf]
 .\wap.ps1 profile delete <name> [-WhatIf]
@@ -86,6 +88,37 @@ Use `--examples` to print step-by-step populated scenarios from
 
 ```powershell
 .\wap.ps1 --examples
+```
+
+## Quick install from GitHub
+
+### 1. One-time direct install
+
+```powershell
+.\wap.ps1 install https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+```
+
+WAP downloads the branch archive to a temporary folder, runs
+`profile install <name>` and `profile activate <name>` from that temporary
+profile definition, then removes the temporary files when the command finishes.
+It does not save the profile definition locally.
+
+### 2. Download first, then install locally
+
+```powershell
+.\wap.ps1 profile download electronics https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+.\wap.ps1 profile install electronics
+.\wap.ps1 profile activate electronics
+```
+
+This copies the remote profile folder under the configured `profilesRoot` using
+the local name `electronics`, and rewrites `profile.yaml` to match that local
+profile name.
+
+Use GitHub folder URLs in this format:
+
+```text
+https://github.com/<owner>/<repo>/tree/<branch>/<path-to-profile-folder>
 ```
 
 The small bootstrap file `wap.config.json` points at the full settings file.

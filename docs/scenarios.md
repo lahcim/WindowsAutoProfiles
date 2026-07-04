@@ -4,7 +4,7 @@ This guide shows common WindowsAutoProfiles workflows end to end.
 
 Version: 1.1
 
-Last updated: 2026-07-04T02:56:40Z
+Last updated: 2026-07-04T07:15:58Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -13,7 +13,36 @@ need administrator rights; Sandbox capture baseline/finalize scripts do and
 will try Windows `sudo.exe` before asking you to paste an exact command into an
 elevated Sandbox PowerShell window.
 
-## Scenario 1: Create a new development profile
+## Scenario 1: Install a published profile
+
+### 1. One-time direct install
+
+```powershell
+.\wap.ps1 install https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+```
+
+This initializes WAP when needed, checks prerequisites, downloads the remote
+profile to temporary storage, installs it, activates it, and removes the
+temporary files.
+
+### 2. Download first, then install locally
+
+```powershell
+.\wap.ps1 profile download electronics https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+.\wap.ps1 profile install electronics
+.\wap.ps1 profile activate electronics
+```
+
+This saves the profile definition under your configured `profilesRoot` as
+`electronics`, so you can review or edit it before installing by local name.
+
+Use GitHub folder URLs in this format:
+
+```text
+https://github.com/<owner>/<repo>/tree/<branch>/<path-to-profile-folder>
+```
+
+## Scenario 2: Create a new development profile
 
 Create a new profile from the example:
 
@@ -79,7 +108,7 @@ developer      True Active C:\Workspaces\developer
 example       False Not installed C:\Workspaces\example
 ```
 
-## Scenario 2: Switch between two profiles
+## Scenario 3: Switch between two profiles
 
 Assume `developer` and `electronics` are both installed:
 
@@ -110,7 +139,7 @@ Done: profile 'developer' deactivated.
 Done: profile 'electronics' activated. Open a new terminal for other processes to see user environment changes.
 ```
 
-## Scenario 3: Add an interactive installer capture to a profile
+## Scenario 4: Add an interactive installer capture to a profile
 
 Some tools are better captured after interactive setup. Start a standalone
 capture:
@@ -170,7 +199,7 @@ Clean up the raw standalone capture when you no longer need it:
 .\wap.ps1 capture remove kicad
 ```
 
-## Scenario 4: Rename a capture before attaching it
+## Scenario 5: Rename a capture before attaching it
 
 If you start with a temporary name:
 
@@ -190,7 +219,7 @@ Attach it using the final name:
 .\wap.ps1 profile capture add electronics kicad --id kicad --name "KiCad"
 ```
 
-## Scenario 5: Reuse one capture in multiple profiles
+## Scenario 6: Reuse one capture in multiple profiles
 
 Attach the capture to the first profile:
 
@@ -211,7 +240,7 @@ profiles\electronics\captures\kicad\
 profiles\developer\captures\kicad\
 ```
 
-## Scenario 6: Update capture metadata
+## Scenario 7: Update capture metadata
 
 Use metadata to explain why a capture exists:
 

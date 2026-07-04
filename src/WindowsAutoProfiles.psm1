@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 
 $script:WapMinimumPowerShellVersion = [version]'5.1'
 $script:WapVersion = '1.1'
-$script:WapLastUpdated = '2026-07-04T05:18:20Z'
+$script:WapLastUpdated = '2026-07-04T07:15:58Z'
 
 function Assert-WapPowerShellVersion {
     param(
@@ -706,7 +706,13 @@ function Get-WapConfig {
     else {
         'profiles'
     }
-    $profilesRoot = Resolve-WapConfigPathValue -Value $profilesRootValue -BasePath $configDirectory -Name 'profilesRoot'
+    $profilesRootOverride = [Environment]::GetEnvironmentVariable('WAP_PROFILES_ROOT_OVERRIDE', 'Process')
+    $profilesRoot = if (-not [string]::IsNullOrWhiteSpace($profilesRootOverride)) {
+        Resolve-WapConfigPathValue -Value $profilesRootOverride -BasePath $RepositoryRoot -Name 'WAP_PROFILES_ROOT_OVERRIDE'
+    }
+    else {
+        Resolve-WapConfigPathValue -Value $profilesRootValue -BasePath $configDirectory -Name 'profilesRoot'
+    }
 
     $logConfig = Get-WapLogConfig -RepositoryRoot $RepositoryRoot
     $sandboxInstallWinget = $true
@@ -1301,6 +1307,197 @@ function ConvertTo-WapPackageList {
         }
     }
     return @($packages)
+}
+
+function ConvertFrom-WapGitHubProfileUrl {
+    param([Parameter(Mandatory)][string] $Url)
+
+    try {
+        $uri = [Uri]$Url
+    }
+    catch {
+        throw "Remote profile URL '$Url' is not a valid URI."
+    }
+
+    if ($uri.Scheme -notin @('http', 'https') -or $uri.Host.ToLowerInvariant() -ne 'github.com') {
+        throw "Remote profile URL must be a GitHub folder URL like 'https://github.com/owner/repo/tree/main/profiles/name'."
+    }
+
+    $segments = @($uri.AbsolutePath.Trim('/') -split '/' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($segments.Count -lt 5 -or $segments[2] -notin @('tree', 'blob')) {
+        throw "GitHub profile URL must use '/tree/<branch>/<path>' or '/blob/<branch>/<path>/profile.yaml'."
+    }
+
+    $owner = $segments[0]
+    $repo = $segments[1]
+    $kind = $segments[2]
+    $ref = $segments[3]
+    $pathSegments = @($segments[4..($segments.Count - 1)])
+    if ($kind -eq 'blob') {
+        if ($pathSegments[-1] -ne 'profile.yaml') {
+            throw "GitHub blob profile URL must point to a profile.yaml file."
+        }
+        if ($pathSegments.Count -lt 2) {
+            throw 'GitHub blob profile URL must include the profile folder path before profile.yaml.'
+        }
+        $pathSegments = @($pathSegments[0..($pathSegments.Count - 2)])
+    }
+    if (-not $pathSegments.Count) {
+        throw 'GitHub profile URL must include the profile folder path.'
+    }
+
+    $profileName = $pathSegments[-1]
+    if ($profileName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+        throw "Remote profile folder name '$profileName' is not a valid WAP profile name."
+    }
+
+    [pscustomobject]@{
+        owner = $owner
+        repo = $repo
+        ref = $ref
+        path = ($pathSegments -join '/')
+        name = $profileName
+        archiveUrl = "https://codeload.github.com/$owner/$repo/zip/refs/heads/$ref"
+        displayUrl = "https://github.com/$owner/$repo/tree/$ref/$($pathSegments -join '/')"
+    }
+}
+
+function Save-WapGitHubProfileDefinition {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)] $Reference,
+        [Parameter(Mandatory)][string] $ProfilesRoot,
+        [string] $TargetName,
+        [switch] $Force
+    )
+
+    if ([string]::IsNullOrWhiteSpace($TargetName)) { $TargetName = $Reference.name }
+    if ($TargetName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+        throw "Target profile name '$TargetName' is not valid. Use letters, numbers, dots, underscores, and hyphens."
+    }
+    $targetRoot = Join-Path $ProfilesRoot $TargetName
+    if ((Test-Path -LiteralPath $targetRoot) -and -not $Force) {
+        throw "Profile '$TargetName' already exists at '$targetRoot'."
+    }
+
+    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("wap-github-profile-$PID-$([guid]::NewGuid().ToString('N'))")
+    $zipPath = Join-Path $tempRoot 'repo.zip'
+    $extractRoot = Join-Path $tempRoot 'extract'
+    try {
+        New-Item -ItemType Directory -Path $tempRoot, $extractRoot -Force | Out-Null
+        Write-Host "Downloading remote profile from $($Reference.displayUrl)"
+        Invoke-WebRequest -Uri $Reference.archiveUrl -OutFile $zipPath -UseBasicParsing
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force
+        $repoRoot = Get-ChildItem -LiteralPath $extractRoot -Directory | Select-Object -First 1
+        if (-not $repoRoot) {
+            throw 'Downloaded GitHub archive did not contain a repository root directory.'
+        }
+        $sourceRoot = Join-Path $repoRoot.FullName (($Reference.path -split '/') -join [IO.Path]::DirectorySeparatorChar)
+        $sourceProfile = Join-Path $sourceRoot 'profile.yaml'
+        if (-not (Test-Path -LiteralPath $sourceProfile -PathType Leaf)) {
+            throw "Remote profile folder '$($Reference.path)' does not contain profile.yaml."
+        }
+
+        if ($PSCmdlet.ShouldProcess($targetRoot, "Save remote profile '$TargetName'")) {
+            if (Test-Path -LiteralPath $targetRoot) {
+                Remove-Item -LiteralPath $targetRoot -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path (Split-Path -Parent $targetRoot) -Force | Out-Null
+            Copy-Item -LiteralPath $sourceRoot -Destination $targetRoot -Recurse -Force
+            Set-WapProfileDefinitionName -ProfileRoot $targetRoot -Name $TargetName
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    return $targetRoot
+}
+
+function Set-WapProfileDefinitionName {
+    param(
+        [Parameter(Mandatory)][string] $ProfileRoot,
+        [Parameter(Mandatory)][string] $Name
+    )
+
+    $profilePath = Join-Path $ProfileRoot 'profile.yaml'
+    if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
+        throw "Downloaded profile is missing '$profilePath'."
+    }
+    $content = Get-Content -LiteralPath $profilePath -Raw
+    $regex = New-Object System.Text.RegularExpressions.Regex('(?m)^name\s*:.*$')
+    if ($regex.IsMatch($content)) {
+        $content = $regex.Replace($content, "name: $Name", 1)
+    }
+    else {
+        $content = "name: $Name`r`n$content"
+    }
+    Set-Content -LiteralPath $profilePath -Value $content -Encoding UTF8
+}
+
+function Save-WapRemoteProfile {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string] $Name,
+        [Parameter(Mandatory)][string] $Url,
+        [Parameter(Mandatory)][string] $RepositoryRoot
+    )
+
+    $reference = ConvertFrom-WapGitHubProfileUrl -Url $Url
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    if ($WhatIfPreference) {
+        Write-Host "Would download profile '$Name' from $($reference.displayUrl)."
+        Write-Host "Would save profile definition to '$(Join-Path $config.profilesRoot $Name)'."
+        return
+    }
+    $targetRoot = Save-WapGitHubProfileDefinition -Reference $reference -ProfilesRoot $config.profilesRoot -TargetName $Name -WhatIf:$WhatIfPreference
+    Write-Host "Remote profile downloaded to '$targetRoot'."
+    Write-Host 'Install it with:'
+    Write-Host "  .\wap.ps1 profile install $Name"
+}
+
+function Install-WapRemoteProfile {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string] $Url,
+        [Parameter(Mandatory)][string] $RepositoryRoot
+    )
+
+    $reference = ConvertFrom-WapGitHubProfileUrl -Url $Url
+    if ($WhatIfPreference) {
+        Write-Host "Would initialize WindowsAutoProfiles if needed."
+        Write-Host "Would download profile '$($reference.name)' from $($reference.displayUrl)."
+        Write-Host "Would install profile '$($reference.name)'."
+        Write-Host "Would activate profile '$($reference.name)'."
+        return
+    }
+
+    $configPath = Join-Path $RepositoryRoot 'wap.config.json'
+    $statePath = Join-Path $RepositoryRoot '.wap-state.json'
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf) -or -not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+        Write-Host 'Initializing WindowsAutoProfiles before quick install...'
+        Initialize-Wap -RepositoryRoot $RepositoryRoot
+    }
+
+    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("wap-remote-profile-$PID-$([guid]::NewGuid().ToString('N'))")
+    $tempProfilesRoot = Join-Path $tempRoot 'profiles'
+    $previousProfilesRootOverride = [Environment]::GetEnvironmentVariable('WAP_PROFILES_ROOT_OVERRIDE', 'Process')
+    try {
+        New-Item -ItemType Directory -Path $tempProfilesRoot -Force | Out-Null
+        $targetRoot = Save-WapGitHubProfileDefinition -Reference $reference -ProfilesRoot $tempProfilesRoot -TargetName $reference.name -Force
+        Write-Host "Remote profile staged temporarily at '$targetRoot'."
+        [Environment]::SetEnvironmentVariable('WAP_PROFILES_ROOT_OVERRIDE', $tempProfilesRoot, 'Process')
+        Install-WapProfile -Name $reference.name -RepositoryRoot $RepositoryRoot
+        Enable-WapProfile -Name $reference.name -RepositoryRoot $RepositoryRoot
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable('WAP_PROFILES_ROOT_OVERRIDE', $previousProfilesRootOverride, 'Process')
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Invoke-WapWinget {
@@ -4453,13 +4650,14 @@ function Show-WapHelp {
     @'
 WindowsAutoProfiles
 Version: 1.1
-Last updated: 2026-07-04T05:18:20Z
+Last updated: 2026-07-04T07:15:58Z
 Author: Michal Zygmunt <lahcim@fajne.com>
 Minimum PowerShell: 5.1
 
 Usage:
   .\wap.ps1 --help
   .\wap.ps1 --examples
+  .\wap.ps1 install <github-profile-url> [-WhatIf]
   .\wap.ps1 init [--skip-prereqs] [-WhatIf]
   .\wap.ps1 config show
   .\wap.ps1 config set bootstrapConfigPath <path> [-WhatIf]
@@ -4472,6 +4670,7 @@ Usage:
   .\wap.ps1 config set sandbox.installWinget <true|false> [-WhatIf]
   .\wap.ps1 logs cleanup [-WhatIf]
   .\wap.ps1 profile install <name> [--sandbox] [-WhatIf]
+  .\wap.ps1 profile download <name> <github-profile-url> [-WhatIf]
   .\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]
   .\wap.ps1 profile cleanup <name> [--user-data] [--registry] [--all] [-WhatIf]
   .\wap.ps1 profile new <name> [-WhatIf]
@@ -4579,6 +4778,18 @@ function Invoke-WapCli {
     Assert-WapPowerShellVersion -CommandName $commandName
 
     switch ($Command) {
+        'install' {
+            if ($argsList.Count -lt 1) {
+                throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 install' -Completions @(
+                    '.\wap.ps1 install https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics'
+                ))
+            }
+            if ($argsList.Count -ne 1) {
+                throw 'Usage: .\wap.ps1 install <github-profile-url> [-WhatIf]'
+            }
+            Install-WapRemoteProfile -Url $argsList[0] -RepositoryRoot $RepositoryRoot -WhatIf:$whatIf
+            return
+        }
         'init' {
             $unknownInitArguments = @($argsList | Where-Object { -not [string]::IsNullOrEmpty($_) -and $_ -ne '--skip-prereqs' })
             if ($unknownInitArguments.Count -gt 0) {
@@ -4654,6 +4865,7 @@ function Invoke-WapCli {
                 '.\wap.ps1 profile list',
                 '.\wap.ps1 profile show <name>',
                 '.\wap.ps1 profile new <name>',
+                '.\wap.ps1 profile download <name> <github-profile-url>',
                 '.\wap.ps1 profile install <name> [--sandbox]',
                 '.\wap.ps1 profile activate <name>',
                 '.\wap.ps1 profile deactivate <name>',
@@ -4667,6 +4879,13 @@ function Invoke-WapCli {
                 throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 profile' -Completions $profileCompletions)
             }
             $action = $argsList[0]
+            if ($action -eq 'download') {
+                if ($argsList.Count -ne 3) {
+                    throw 'Usage: .\wap.ps1 profile download <name> <github-profile-url> [-WhatIf]'
+                }
+                Save-WapRemoteProfile -Name $argsList[1] -Url $argsList[2] -RepositoryRoot $RepositoryRoot -WhatIf:$whatIf
+                return
+            }
             if ($action -eq 'winget') {
                 if ($argsList.Count -lt 3) {
                     throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 profile winget' -Completions @(
@@ -4950,6 +5169,8 @@ Export-ModuleMember -Function @(
     'Import-WapProfile',
     'Get-WapState',
     'Install-WapProfile',
+    'Install-WapRemoteProfile',
+    'Save-WapRemoteProfile',
     'Start-WapProfileSandboxInstall',
     'Enable-WapProfile',
     'Disable-WapProfile',
