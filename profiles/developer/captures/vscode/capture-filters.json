@@ -1,0 +1,379 @@
+{
+  "version": 1,
+  "registry": [
+    {
+      "reason": "AppContainer browser/app cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Classes\\\\Local Settings\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\AppContainer\\\\Storage\\\\"
+    },
+    {
+      "reason": "AppContainer runtime mapping",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Classes\\\\Local Settings\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\AppContainer\\\\Mappings\\\\"
+    },
+    {
+      "reason": "AppModel runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Classes\\\\Local Settings\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\AppModel\\\\SystemAppData\\\\"
+    },
+    {
+      "reason": "AppModel deployment/runtime cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Classes\\\\Local Settings\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\AppModel\\\\(Deployment|PolicyCache)\\\\"
+    },
+    {
+      "reason": "Explorer shell bag view state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Classes\\\\Local Settings\\\\Software\\\\Microsoft\\\\Windows\\\\Shell\\\\Bag"
+    },
+    {
+      "reason": "Explorer file-open MRU/UserChoice state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\FileExts\\\\"
+    },
+    {
+      "reason": "Explorer UserAssist execution telemetry",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\UserAssist\\\\"
+    },
+    {
+      "reason": "Explorer session state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\SessionInfo\\\\"
+    },
+    {
+      "reason": "Start menu tile cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Start\\\\TileProperties\\\\"
+    },
+    {
+      "reason": "CloudStore shell/input cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\CloudStore\\\\"
+    },
+    {
+      "reason": "IrisService shell cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\IrisService(\\\\|$)"
+    },
+    {
+      "reason": "Security and Maintenance runtime check state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Security and Maintenance(\\\\|$)"
+    },
+    {
+      "reason": "Storage Sense runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\StorageSense(\\\\|$)"
+    },
+    {
+      "reason": "Window placement/runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\WindowProperties\\\\"
+    },
+    {
+      "reason": "Background app runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\BackgroundAccessApplications\\\\"
+    },
+    {
+      "reason": "Explorer feature usage/runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\(FeatureUsage|Discardable|Modules|CabinetState|BannerStore|StorageProvider)(\\\\|$)"
+    },
+    {
+      "reason": "Start menu runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Start(\\\\|$)"
+    },
+    {
+      "reason": "Notifications runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Notifications\\\\"
+    },
+    {
+      "reason": "User file history/runtime cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\UFH\\\\"
+    },
+    {
+      "reason": "Host Activity Manager runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\HostActivityManager\\\\"
+    },
+    {
+      "reason": "AppCompat runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\AppCompatFlags(\\\\|$)"
+    },
+    {
+      "reason": "Winlogon notification runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\Winlogon\\\\PasswordExpiryNotification(\\\\|$)"
+    },
+    {
+      "reason": "Windows shell bag view state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\Shell\\\\Bags\\\\"
+    },
+    {
+      "reason": "Shell association runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\Shell\\\\Associations\\\\"
+    },
+    {
+      "reason": "Shell extension cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Shell Extensions\\\\Cached(\\\\|$)"
+    },
+    {
+      "reason": "Gaming runtime configuration",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\GamingConfiguration(\\\\|$)"
+    },
+    {
+      "reason": "Search runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Search(\\\\|$)"
+    },
+    {
+      "reason": "Explorer user preference/runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\(Advanced|TypedPaths|RecentDocs)(\\\\|$)"
+    },
+    {
+      "reason": "Group Policy runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Group Policy\\\\"
+    },
+    {
+      "reason": "Capability access runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\CapabilityAccessManager\\\\"
+    },
+    {
+      "reason": "Feeds runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Feeds(\\\\|$)"
+    },
+    {
+      "reason": "RulesEngine runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\RulesEngine\\\\"
+    },
+    {
+      "reason": "MUI cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Classes\\\\Local Settings\\\\MuiCache\\\\"
+    },
+    {
+      "reason": "Shell MUI cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Classes\\\\Local Settings\\\\.*\\\\MuiCache(\\\\|$)"
+    },
+    {
+      "reason": "Input/TSF runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\input\\\\"
+    },
+    {
+      "reason": "Phone ShellUI runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Phone\\\\"
+    },
+    {
+      "reason": "Edge runtime/profile churn",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Edge(\\\\|$)"
+    },
+    {
+      "reason": "Edge updater runtime churn",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\EdgeUpdate(\\\\|$)"
+    },
+    {
+      "reason": "Microsoft account IdentityCRL cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\IdentityCRL\\\\"
+    },
+    {
+      "reason": "Microsoft auth cookie cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\AuthCookies\\\\"
+    },
+    {
+      "reason": "GameDVR runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\GameDVR(\\\\|$)"
+    },
+    {
+      "reason": "Explorer RunMRU runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\RunMRU(\\\\|$)"
+    },
+    {
+      "reason": "Notification runtime state",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Classes\\\\NotificationData(\\\\|$)"
+    },
+    {
+      "reason": "File association runtime cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\FileAssociations(\\\\|$)"
+    },
+    {
+      "reason": "Microsoft account IdentityCRL cache",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\IdentityCRL\\\\"
+    },
+    {
+      "reason": "Windows Update runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\WindowsUpdate(\\\\|$)"
+    },
+    {
+      "reason": "Scheduled task cache duplicate",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\Schedule\\\\TaskCache\\\\"
+    },
+    {
+      "reason": "Security Center runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Security Center(\\\\|$)"
+    },
+    {
+      "reason": "Explorer machine runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer(\\\\|$)"
+    },
+    {
+      "reason": "AppModel deployment/runtime cache",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Classes\\\\Local Settings\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\AppModel\\\\(Deployment|PolicyCache)\\\\"
+    },
+    {
+      "reason": "AppX package runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Appx\\\\(PackageVolumes|PackageState)\\\\"
+    },
+    {
+      "reason": "Group Policy runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Group Policy\\\\"
+    },
+    {
+      "reason": "WOW64 group policy runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\WOW6432Node\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Group Policy\\\\"
+    },
+    {
+      "reason": "Capability access runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\CapabilityAccessManager\\\\"
+    },
+    {
+      "reason": "DRM mitigation runtime marker",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\DRMitigationMarker(\\\\|$)"
+    },
+    {
+      "reason": "WOSC runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Wosc\\\\"
+    },
+    {
+      "reason": "Windows Error Reporting runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\Windows Error Reporting\\\\"
+    },
+    {
+      "reason": "Windows notifications runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\Notifications(\\\\|$)"
+    },
+    {
+      "reason": "VFU provider runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\VFUProvider(\\\\|$)"
+    },
+    {
+      "reason": "Windows FCON runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Fcon(\\\\|$)"
+    },
+    {
+      "reason": "DirectX runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\DirectX(\\\\|$)"
+    },
+    {
+      "reason": "Windows Performance Toolkit runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows Performance Toolkit(\\\\|$)"
+    },
+    {
+      "reason": "RADAR diagnostic runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\RADAR\\\\"
+    },
+    {
+      "reason": "Edge updater runtime churn",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\WOW6432Node\\\\Microsoft\\\\EdgeUpdate\\\\"
+    },
+    {
+      "reason": "Edge extension runtime churn",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\WOW6432Node\\\\Microsoft\\\\Edge\\\\Extensions(\\\\|$)"
+    },
+    {
+      "reason": "Certificate cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\SystemCertificates\\\\"
+    },
+    {
+      "reason": "Certificate cache",
+      "pattern": "^HKEY_CURRENT_USER\\\\Software\\\\Policies\\\\Microsoft\\\\SystemCertificates\\\\"
+    },
+    {
+      "reason": "Certificate cache",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\SystemCertificates\\\\"
+    },
+    {
+      "reason": "WOW64 certificate cache",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\WOW6432Node\\\\Microsoft\\\\SystemCertificates\\\\"
+    },
+    {
+      "reason": "Enterprise certificate cache",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\EnterpriseCertificates\\\\"
+    },
+    {
+      "reason": "WOW64 enterprise certificate cache",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\WOW6432Node\\\\Microsoft\\\\EnterpriseCertificates\\\\"
+    },
+    {
+      "reason": "Certificate policy cache",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Policies\\\\Microsoft\\\\SystemCertificates\\\\"
+    },
+    {
+      "reason": "WOW64 certificate policy cache",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\WOW6432Node\\\\Policies\\\\Microsoft\\\\SystemCertificates\\\\"
+    },
+    {
+      "reason": "AppCompat settings service state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\AppCompatFlags\\\\OneSettings(\\\\|$)"
+    },
+    {
+      "reason": "Component Based Servicing runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Component Based Servicing(\\\\|$)"
+    },
+    {
+      "reason": "Windows Health Evaluation runtime state",
+      "pattern": "^HKEY_LOCAL_MACHINE\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\whesvc\\\\"
+    }
+  ],
+  "file": [
+    {
+      "reason": "Edge profile/cache files",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Microsoft\\\\Edge\\\\User Data\\\\"
+    },
+    {
+      "reason": "Windows packaged app runtime files",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Packages\\\\(MicrosoftWindows\\.Client\\.(CBS|OOBE)_|Microsoft\\.Windows\\.ShellExperienceHost_|cr\\.sb\\.)"
+    },
+    {
+      "reason": "Recent documents and jump-list state",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Roaming\\\\Microsoft\\\\Windows\\\\Recent\\\\"
+    },
+    {
+      "reason": "PSReadLine command history",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Roaming\\\\Microsoft\\\\Windows\\\\PowerShell\\\\PSReadLine\\\\"
+    },
+    {
+      "reason": "D3D shader cache",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\D3DSCache\\\\"
+    },
+    {
+      "reason": "NVIDIA shader cache",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\NVIDIA\\\\DXCache\\\\"
+    },
+    {
+      "reason": "Python pip cache",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\pip\\\\cache\\\\"
+    },
+    {
+      "reason": "Windows credential/vault cache",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Microsoft\\\\(Credentials|Vault)\\\\"
+    },
+    {
+      "reason": "TokenBroker runtime cache",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Microsoft\\\\TokenBroker\\\\"
+    },
+    {
+      "reason": "Internet Explorer runtime cache",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Microsoft\\\\Internet Explorer\\\\"
+    },
+    {
+      "reason": "Windows local runtime cache",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Microsoft\\\\Windows\\\\"
+    },
+    {
+      "reason": "Temporary debug log",
+      "pattern": "^C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\Temp\\\\cv_debug\\.log$"
+    },
+    {
+      "reason": "ProgramData diagnostic collector logs",
+      "pattern": "^C:\\\\ProgramData\\\\Microsoft\\\\DiagnosticLogCSP\\\\Collectors\\\\"
+    },
+    {
+      "reason": "ProgramData vault cache",
+      "pattern": "^C:\\\\ProgramData\\\\Microsoft\\\\Vault\\\\"
+    },
+    {
+      "reason": "Windows health/performance telemetry",
+      "pattern": "^C:\\\\ProgramData\\\\Whesvc\\\\perftrack_summary\\\\"
+    }
+  ],
+  "uninstall": [
+    {
+      "reason": "Microsoft Edge built-in updater/uninstaller",
+      "commandPattern": "(?i)^\"?C:\\\\Program Files \\(x86\\)\\\\Microsoft\\\\Edge\\\\Application\\\\[^\\\\]+\\\\Installer\\\\setup\\.exe\"?(\\s|$)",
+      "pathPattern": "(?i)^C:\\\\Program Files \\(x86\\)\\\\Microsoft\\\\Edge\\\\Application\\\\[^\\\\]+\\\\Installer\\\\setup\\.exe$",
+      "registryKeyPattern": "(?i)\\\\CurrentVersion\\\\Uninstall\\\\Microsoft Edge$"
+    }
+  ]
+}

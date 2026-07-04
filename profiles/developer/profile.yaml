@@ -1,0 +1,33 @@
+# Created 2026-07-03T20:26:15.4019544-07:00
+# WindowsAutoProfiles profile
+name: developer
+apps:
+  - id: Git.Git
+    source: winget
+    enabled: true
+  - id: GoLang.Go
+    source: winget
+    enabled: true
+  - id: OpenJS.NodeJS.LTS
+    source: winget
+    enabled: true
+  - id: Chocolatey.Chocolatey
+    source: winget
+    enabled: true
+  - id: Python.Python.3.13
+    source: winget
+    enabled: true
+env:
+  WAP_PROFILE: developer
+path:
+  # - ${profileRoot}\Apps\bin
+projects: ${profileRoot}\Projects
+data: ${profileRoot}\Data
+downloads: ${profileRoot}\Downloads
+cache: ${profileRoot}\Cache
+shortcuts:
+  # - name: Example
+  #   target: ${profileRoot}\Apps\Example.exe
+captures:
+  - id: vscode
+    enabled: true

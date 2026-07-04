@@ -1,0 +1,6 @@
+# WindowsAutoProfiles capture profile
+name: vscode
+apps:
+  - id: Microsoft.VisualStudioCode
+    source: winget
+    enabled: true
