@@ -756,7 +756,7 @@ function Show-WapConfig {
         'logging.retentionDays' = $config.loggingRetentionDays
         'logging.root' = $rawLoggingRoot
         'sandbox.installWinget' = $rawSandboxInstallWinget
-    } | Format-List
+    } | Format-List | Out-String -Width 4096
     Write-Output ''
     Write-Output 'Dynamic resolved settings (read-only; computed at runtime from the configurable settings above):'
     [pscustomobject]@{
@@ -766,7 +766,7 @@ function Show-WapConfig {
         'resolved.workspaceRoot' = $config.workspaceRoot
         'resolved.profilesRoot' = $config.profilesRoot
         'resolved.logging.root' = $config.logRoot
-    } | Format-List
+    } | Format-List | Out-String -Width 4096
 }
 
 function Set-WapConfig {
@@ -3842,24 +3842,24 @@ function Show-WapCaptureDiff {
     $manifest = Read-WapCaptureManifest -Name $Name -RepositoryRoot $RepositoryRoot
     $addedFiles = @($manifest.addedFiles | Where-Object { $null -ne $_ })
     $hasFilteredFiles = $null -ne $manifest.PSObject.Properties['filteredAddedFiles']
-    $filteredFiles = if ($hasFilteredFiles) {
+    $filteredFiles = @(if ($hasFilteredFiles) {
         @($manifest.filteredAddedFiles | Where-Object { $null -ne $_ })
     }
-    else { @() }
+    else { @() })
     $changedRegistry = @($manifest.changedRegistryKeys | Where-Object { $null -ne $_ })
     $hasFilteredRegistry = $null -ne $manifest.PSObject.Properties['filteredRegistryKeys']
-    $filteredRegistry = if ($hasFilteredRegistry) {
+    $filteredRegistry = @(if ($hasFilteredRegistry) {
         @($manifest.filteredRegistryKeys | Where-Object { $null -ne $_ })
     }
-    else { @() }
+    else { @() })
     $newServices = @($manifest.newServices | Where-Object { $null -ne $_ })
     $newShortcuts = @($manifest.newShortcuts | Where-Object { $null -ne $_ })
     $uninstallCommands = @($manifest.suspectedUninstallCommands | Where-Object { $null -ne $_ })
     $hasFilteredUninstallCommands = $null -ne $manifest.PSObject.Properties['filteredUninstallCommands']
-    $filteredUninstallCommands = if ($hasFilteredUninstallCommands) {
+    $filteredUninstallCommands = @(if ($hasFilteredUninstallCommands) {
         @($manifest.filteredUninstallCommands | Where-Object { $null -ne $_ })
     }
-    else { @() }
+    else { @() })
 
     Write-Host "Capture diff for '$Name'"
     Write-Host "  Added files:                  $($addedFiles.Count)"
