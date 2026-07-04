@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T06:56:18Z
+Last updated: 2026-07-04T08:38:26Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -24,6 +24,7 @@ name: developer
 apps:
   - id: Git.Git
     source: winget
+    version: 2.50.1
     enabled: true
   - id: Anysphere.Cursor
     source: winget
@@ -97,6 +98,7 @@ Expanded form:
 apps:
   - id: Git.Git
     source: winget
+    version: 2.50.1
     enabled: true
 ```
 
@@ -104,12 +106,14 @@ apps:
 |---|---|---|
 | `id` | required | Exact WinGet package ID. |
 | `source` | `winget` | WinGet source to use. |
+| `version` | not set | Optional WinGet package version. When omitted, WinGet installs the default/latest available version for that ID/source. |
 | `enabled` | `true` | Disabled packages remain documented but are skipped by install/uninstall. |
 
 Use CLI commands to keep YAML normalized:
 
 ```powershell
 .\wap.ps1 profile winget add developer Git.Git
+.\wap.ps1 profile winget add developer Git.Git --version 2.50.1
 .\wap.ps1 profile winget disable developer Git.Git
 .\wap.ps1 profile winget enable developer Git.Git
 .\wap.ps1 profile winget remove developer Git.Git

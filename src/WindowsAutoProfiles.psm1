@@ -1323,11 +1323,14 @@ function ConvertTo-WapPackageList {
     if (-not $Apps) { return @() }
     foreach ($app in @($Apps)) {
         if ($app -is [string]) {
-            $packages += [pscustomobject]@{ id = $app; source = 'winget'; enabled = $true }
+            $packages += [pscustomobject]@{ id = $app; source = 'winget'; version = $null; enabled = $true }
         }
         else {
             $id = if ($app -is [System.Collections.IDictionary]) { $app['id'] } else { $app.id }
             $source = if ($app -is [System.Collections.IDictionary]) { $app['source'] } else { $app.source }
+            $version = if ($app -is [System.Collections.IDictionary]) { $app['version'] } else {
+                if ($app.PSObject.Properties['version']) { $app.version } else { $null }
+            }
             $enabled = if ($app -is [System.Collections.IDictionary]) { $app['enabled'] } else {
                 if ($app.PSObject.Properties['enabled']) { $app.enabled } else { $null }
             }
@@ -1335,6 +1338,7 @@ function ConvertTo-WapPackageList {
             $packages += [pscustomobject]@{
                 id = [string]$id
                 source = if ($source) { [string]$source } else { 'winget' }
+                version = if ($version) { [string]$version } else { $null }
                 enabled = ConvertFrom-WapEnabledValue $enabled
             }
         }
@@ -1410,7 +1414,7 @@ function Save-WapGitHubProfileDefinition {
     }
     $targetRoot = Join-Path $ProfilesRoot $TargetName
     if ((Test-Path -LiteralPath $targetRoot) -and -not $Force) {
-        throw "Profile '$TargetName' already exists at '$targetRoot'."
+        throw "Profile '$TargetName' already exists at '$targetRoot'. Rerun with --force to replace the existing local profile definition."
     }
 
     $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("wap-github-profile-$PID-$([guid]::NewGuid().ToString('N'))")
@@ -1645,18 +1649,25 @@ function Write-WapProfileInstallStatus {
 function Get-WapWingetInstallArguments {
     param(
         [Parameter(Mandatory)][string] $Id,
-        [Parameter(Mandatory)][string] $Source
+        [Parameter(Mandatory)][string] $Source,
+        [string] $Version
     )
 
-    return @(
+    $arguments = @(
         'install',
         '-e',
         '--id', $Id,
-        '--source', $Source,
+        '--source', $Source
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Version)) {
+        $arguments += @('--version', $Version)
+    }
+    $arguments += @(
         '--accept-package-agreements',
         '--accept-source-agreements',
         '--disable-interactivity'
     )
+    return $arguments
 }
 
 function Get-WapWingetInstallTimeoutSeconds {
@@ -1788,7 +1799,7 @@ function Install-WapProfile {
                 }
                 Write-Host "    [install] $($app.id)"
                 Write-WapProfileInstallStatus -ItemType 'package' -State 'installing' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
-                $installArguments = Get-WapWingetInstallArguments -Id $app.id -Source $app.source
+                $installArguments = Get-WapWingetInstallArguments -Id $app.id -Source $app.source -Version $app.version
                 Invoke-WapWingetInstall -WingetPath $winget.Source -Arguments $installArguments -PackageId $app.id -Source $app.source
                 [void]$installedPackages.Add($app.id)
                 Write-Host "    [installed] $($app.id)"
@@ -1842,7 +1853,7 @@ function Install-WapProfile {
                     }
                     Write-Host "        [install] $($package.id)"
                     Write-WapProfileInstallStatus -ItemType 'capture package' -State 'installing' -ItemId $statusItemId -Index $capturePackageIndex -Total $capturePackages.Count
-                    $installArguments = Get-WapWingetInstallArguments -Id $package.id -Source $package.source
+                    $installArguments = Get-WapWingetInstallArguments -Id $package.id -Source $package.source -Version $package.version
                     Invoke-WapWingetInstall -WingetPath $winget.Source -Arguments $installArguments -PackageId $package.id -Source $package.source
                     [void]$installedPackages.Add($package.id)
                     Write-Host "        [installed] $($package.id)"
@@ -3598,6 +3609,9 @@ function Set-WapProfileDefinitionLists {
         $appsReplacement += "  - id: $(ConvertTo-WapYamlScalar ([string]$package.id))"
         $source = if ($package.source) { [string]$package.source } else { 'winget' }
         $appsReplacement += "    source: $(ConvertTo-WapYamlScalar $source)"
+        if ($package.PSObject.Properties['version'] -and -not [string]::IsNullOrWhiteSpace([string]$package.version)) {
+            $appsReplacement += "    version: $(ConvertTo-WapYamlScalar ([string]$package.version))"
+        }
         $enabled = if ($package.PSObject.Properties['enabled']) { [bool]$package.enabled } else { $true }
         $appsReplacement += "    enabled: $($enabled.ToString().ToLowerInvariant())"
     }
@@ -3675,6 +3689,9 @@ function Set-WapCaptureProfilePackages {
         $lines += "  - id: $(ConvertTo-WapYamlScalar ([string]$package.id))"
         $source = if ($package.source) { [string]$package.source } else { 'winget' }
         $lines += "    source: $(ConvertTo-WapYamlScalar $source)"
+        if ($package.PSObject.Properties['version'] -and -not [string]::IsNullOrWhiteSpace([string]$package.version)) {
+            $lines += "    version: $(ConvertTo-WapYamlScalar ([string]$package.version))"
+        }
         $enabled = if ($package.PSObject.Properties['enabled']) { [bool]$package.enabled } else { $true }
         $lines += "    enabled: $($enabled.ToString().ToLowerInvariant())"
     }
@@ -3736,7 +3753,8 @@ function Add-WapProfileWingetPackage {
         [Parameter(Mandatory)][string] $ProfileName,
         [Parameter(Mandatory)][string] $PackageId,
         [Parameter(Mandatory)][string] $RepositoryRoot,
-        [string] $Source = 'winget'
+        [string] $Source = 'winget',
+        [string] $Version
     )
 
     if ([string]::IsNullOrWhiteSpace($PackageId)) { throw 'Package id is required.' }
@@ -3746,9 +3764,10 @@ function Add-WapProfileWingetPackage {
     if ($packages | Where-Object { $_.id -eq $PackageId -and $_.source -eq $Source }) {
         throw "Profile '$ProfileName' already has winget package '$PackageId' from source '$Source'."
     }
-    $packages += [pscustomobject]@{ id = $PackageId; source = $Source; enabled = $true }
+    $packages += [pscustomobject]@{ id = $PackageId; source = $Source; version = if ($Version) { $Version } else { $null }; enabled = $true }
     Set-WapProfileWingetPackages -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $packages
-    Write-Host "Added winget package '$PackageId' to profile '$ProfileName' (source: $Source)."
+    $versionText = if ($Version) { "; version: $Version" } else { '' }
+    Write-Host "Added winget package '$PackageId' to profile '$ProfileName' (source: $Source$versionText)."
 }
 
 function Set-WapProfileWingetPackageEnabled {
@@ -3773,6 +3792,7 @@ function Set-WapProfileWingetPackageEnabled {
         [pscustomobject]@{
             id = $_.id
             source = $_.source
+            version = if ($_.PSObject.Properties['version']) { $_.version } else { $null }
             enabled = if ($_.id -eq $PackageId -and ((-not $Source) -or $_.source -eq $Source)) { $Enabled } else { [bool]$_.enabled }
         }
     })
@@ -3793,7 +3813,7 @@ function Show-WapProfileWingetPackages {
         Write-Host "Profile '$ProfileName' has no winget packages."
         return
     }
-    $items | Select-Object id, source, enabled | Format-Table -AutoSize -Wrap
+    $items | Select-Object id, source, version, enabled | Format-Table -AutoSize -Wrap
 }
 
 function Remove-WapProfileWingetPackage {
@@ -3842,7 +3862,7 @@ function Show-WapProfile {
     Write-Host "Shared root:    $($profile.sharedRoot)"
     Write-Host ''
     Write-Host "Winget packages: $($profile.apps.Count)"
-    if ($profile.apps.Count) { $profile.apps | Select-Object id, source, enabled | Format-Table -AutoSize -Wrap }
+    if ($profile.apps.Count) { $profile.apps | Select-Object id, source, version, enabled | Format-Table -AutoSize -Wrap }
     Write-Host ''
     $capturePlan = @(Get-WapProfileCapturePlan -Name $ProfileName -RepositoryRoot $RepositoryRoot)
     Write-Host "Attached captures: $($capturePlan.Count)"
@@ -4742,7 +4762,7 @@ Usage:
   .\wap.ps1 profile status
   .\wap.ps1 profile list
   .\wap.ps1 profile show <name>
-  .\wap.ps1 profile winget add <profile> <packageId> [--source <source>]
+  .\wap.ps1 profile winget add <profile> <packageId> [--source <source>] [--version <version>]
   .\wap.ps1 profile winget list <profile>
   .\wap.ps1 profile winget enable <profile> <packageId> [--source <source>]
   .\wap.ps1 profile winget disable <profile> <packageId> [--source <source>]
@@ -4953,7 +4973,7 @@ function Invoke-WapCli {
             if ($action -eq 'winget') {
                 if ($argsList.Count -lt 3) {
                     throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 profile winget' -Completions @(
-                        '.\wap.ps1 profile winget add <profile> <packageId> [--source <source>]',
+                        '.\wap.ps1 profile winget add <profile> <packageId> [--source <source>] [--version <version>]',
                         '.\wap.ps1 profile winget list <profile>',
                         '.\wap.ps1 profile winget enable <profile> <packageId> [--source <source>]',
                         '.\wap.ps1 profile winget disable <profile> <packageId> [--source <source>]',
@@ -4963,11 +4983,12 @@ function Invoke-WapCli {
                 $wingetAction = $argsList[1]
                 switch ($wingetAction) {
                     'add' {
-                        if ($argsList.Count -lt 4) { throw 'Usage: .\wap.ps1 profile winget add <profile> <packageId> [--source <source>]' }
+                        if ($argsList.Count -lt 4) { throw 'Usage: .\wap.ps1 profile winget add <profile> <packageId> [--source <source>] [--version <version>]' }
                         Add-WapProfileWingetPackage -ProfileName $argsList[2] `
                             -PackageId $argsList[3] `
                             -RepositoryRoot $RepositoryRoot `
-                            -Source (Get-WapCliOption -Arguments $argsList -Name 'source')
+                            -Source (Get-WapCliOption -Arguments $argsList -Name 'source') `
+                            -Version (Get-WapCliOption -Arguments $argsList -Name 'version')
                     }
                     'list' {
                         if ($argsList.Count -ne 3) { throw 'Usage: .\wap.ps1 profile winget list <profile>' }
@@ -4999,7 +5020,7 @@ function Invoke-WapCli {
                     }
                     default {
                         throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 profile winget' -UnknownToken ([string]$wingetAction) -Completions @(
-                            '.\wap.ps1 profile winget add <profile> <packageId> [--source <source>]',
+                            '.\wap.ps1 profile winget add <profile> <packageId> [--source <source>] [--version <version>]',
                             '.\wap.ps1 profile winget list <profile>',
                             '.\wap.ps1 profile winget enable <profile> <packageId> [--source <source>]',
                             '.\wap.ps1 profile winget disable <profile> <packageId> [--source <source>]',

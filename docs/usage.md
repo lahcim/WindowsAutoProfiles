@@ -5,7 +5,7 @@ and expected command output.
 
 Version: 1.1
 
-Last updated: 2026-07-04T08:17:28Z
+Last updated: 2026-07-04T08:38:26Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -62,7 +62,7 @@ dispatching each command.
 .\wap.ps1 profile list
 .\wap.ps1 profile show <name>
 
-.\wap.ps1 profile winget add <profile> <packageId> [--source <source>]
+.\wap.ps1 profile winget add <profile> <packageId> [--source <source>] [--version <version>]
 .\wap.ps1 profile winget list <profile>
 .\wap.ps1 profile winget enable <profile> <packageId> [--source <source>]
 .\wap.ps1 profile winget disable <profile> <packageId> [--source <source>]
@@ -128,7 +128,8 @@ It does not save the profile definition locally.
 This copies the remote profile folder under the configured `profilesRoot` using
 the local name `electronics`, and rewrites `profile.yaml` to match that local
 profile name. Add `--force` to overwrite an existing downloaded profile
-definition with the same local name.
+definition with the same local name. This may be required when refreshing a
+profile you downloaded before.
 
 Use GitHub folder URLs in this format:
 
@@ -426,15 +427,17 @@ Add WinGet packages to the profile definition:
 
 ```powershell
 .\wap.ps1 profile winget add developer Python.Python.3.13
+.\wap.ps1 profile winget add developer Python.Python.3.13 --version 3.13.5
 .\wap.ps1 profile winget add developer Microsoft.VisualStudioCode --source winget
 .\wap.ps1 profile winget disable developer Microsoft.VisualStudioCode
 .\wap.ps1 profile winget list developer
 .\wap.ps1 profile show developer
 ```
 
-`--source` defaults to `winget`. During install, WAP runs WinGet with exact
-package IDs, the configured source, `--accept-package-agreements`, and
-`--accept-source-agreements` so source/package prompts are answered
+`--source` defaults to `winget`. `--version` is optional; when present, WAP
+passes it to WinGet as `--version <version>`. During install, WAP runs WinGet
+with exact package IDs, the configured source, `--accept-package-agreements`,
+and `--accept-source-agreements` so source/package prompts are answered
 automatically. Every package has an `enabled` flag in `profile.yaml`; disabled
 packages remain documented but are skipped by install and uninstall. Use
 `profile winget enable|disable` to toggle the flag without editing YAML.

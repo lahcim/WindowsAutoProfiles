@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T08:17:28Z
+Last updated: 2026-07-04T08:38:26Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -69,7 +69,7 @@ https://github.com/<owner>/<repo>/tree/<branch>/<path-to-profile-folder>
 | `.\wap.ps1 profile list` | Alias for `profile status`. |
 | `.\wap.ps1 profile show <name>` | Show one profile's definition path, roots, WinGet packages, attached captures, and unreferenced capture folders. |
 | `.\wap.ps1 profile new <name> [-WhatIf]` | Create a starter `<profilesRoot>\<name>\profile.yaml`. |
-| `.\wap.ps1 profile download <name> <github-profile-url> [--force] [-WhatIf]` | Download a GitHub profile folder into the configured `profilesRoot` using the supplied local profile name. Use `--force` to replace an existing local definition. |
+| `.\wap.ps1 profile download <name> <github-profile-url> [--force] [-WhatIf]` | Download a GitHub profile folder into the configured `profilesRoot` using the supplied local profile name. Use `--force` to replace an existing local definition when refreshing a previously downloaded profile. |
 | `.\wap.ps1 profile install <name> [-WhatIf]` | Create directories, install enabled profile and capture-owned WinGet packages, create shortcuts, and save install state. |
 | `.\wap.ps1 profile install <name> --sandbox [-WhatIf]` | Launch a disposable Windows Sandbox profile-install test and leave it open for manual lifecycle testing. |
 | `.\wap.ps1 profile activate <name> [-WhatIf]` | Apply the profile's user environment variables and PATH fragments. |
@@ -83,14 +83,15 @@ https://github.com/<owner>/<repo>/tree/<branch>/<path-to-profile-folder>
 
 | Command | Description |
 |---|---|
-| `.\wap.ps1 profile winget add <profile> <packageId> [--source <source>]` | Add an enabled package to the profile `apps:` list. Source defaults to `winget`. |
-| `.\wap.ps1 profile winget list <profile>` | List package id, source, and enabled state. |
+| `.\wap.ps1 profile winget add <profile> <packageId> [--source <source>] [--version <version>]` | Add an enabled package to the profile `apps:` list. Source defaults to `winget`; version is optional. |
+| `.\wap.ps1 profile winget list <profile>` | List package id, source, optional version, and enabled state. |
 | `.\wap.ps1 profile winget enable <profile> <packageId> [--source <source>]` | Mark a package enabled without editing YAML. |
 | `.\wap.ps1 profile winget disable <profile> <packageId> [--source <source>]` | Keep a package documented but skip it during install/uninstall. |
 | `.\wap.ps1 profile winget remove <profile> <packageId> [--source <source>] [-WhatIf]` | Remove a package entry from `apps:`. Specify `--source` when duplicate IDs exist with different sources. |
 
 During install, WAP checks whether each enabled package is already installed,
-then runs WinGet exact-id install with package/source agreements accepted. The
+then runs WinGet exact-id install with package/source agreements accepted. If a
+profile package has `version`, WAP passes it to WinGet as `--version`. The
 per-package timeout defaults to 900 seconds and can be overridden for the
 process with `WAP_WINGET_INSTALL_TIMEOUT_SECONDS`.
 

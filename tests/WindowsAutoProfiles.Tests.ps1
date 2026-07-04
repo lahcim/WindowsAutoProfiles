@@ -162,7 +162,7 @@ Describe 'state, init, and capture' {
         Mock Test-WapWingetAvailable {
             $global:wingetChecks++
             return ($global:wingetChecks -ge 2)
-        } -ModuleName WindowsAutoProfiles
+        } -ModuleName WindowsAutoProfiles -Scope It
         Mock Add-AppxPackage {} -ModuleName WindowsAutoProfiles
         Mock Install-PackageProvider {} -ModuleName WindowsAutoProfiles
         Mock Install-Module {} -ModuleName WindowsAutoProfiles
@@ -206,17 +206,17 @@ Describe 'state, init, and capture' {
                 'apps:'
             ) | Set-Content -LiteralPath (Join-Path $target 'profile.yaml') -Encoding UTF8
             return $target
-        } -ModuleName WindowsAutoProfiles
+        } -ModuleName WindowsAutoProfiles -Scope It
         Mock Install-WapProfile {
             param([string] $Name, [string] $RepositoryRoot)
             $global:quickInstallName = $Name
             [Environment]::GetEnvironmentVariable('WAP_PROFILES_ROOT_OVERRIDE', 'Process') | Should Be $global:quickInstallProfilesRoot
-        } -ModuleName WindowsAutoProfiles
+        } -ModuleName WindowsAutoProfiles -Scope It
         Mock Enable-WapProfile {
             param([string] $Name, [string] $RepositoryRoot)
             $global:quickInstallActivatedName = $Name
             [Environment]::GetEnvironmentVariable('WAP_PROFILES_ROOT_OVERRIDE', 'Process') | Should Be $global:quickInstallProfilesRoot
-        } -ModuleName WindowsAutoProfiles
+        } -ModuleName WindowsAutoProfiles -Scope It
 
         Invoke-WapCli -Command install -Arguments @('https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics') -RepositoryRoot $repo
 
@@ -237,7 +237,7 @@ Describe 'state, init, and capture' {
     It 'previews quick install without initializing or downloading' {
         $repo = Join-Path $TestDrive 'quick-install-whatif'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Mock Save-WapGitHubProfileDefinition { throw 'download should not run during WhatIf' } -ModuleName WindowsAutoProfiles
+        Mock Save-WapGitHubProfileDefinition { throw 'download should not run during WhatIf' } -ModuleName WindowsAutoProfiles -Scope It
         Mock Install-WapProfile { throw 'install should not run during WhatIf' } -ModuleName WindowsAutoProfiles
         Mock Enable-WapProfile { throw 'activate should not run during WhatIf' } -ModuleName WindowsAutoProfiles
 
@@ -305,10 +305,27 @@ Describe 'state, init, and capture' {
         Remove-Variable -Name downloadForce -Scope Global -ErrorAction SilentlyContinue
     }
 
+    It 'suggests force when downloading over an existing profile definition' {
+        $repo = Join-Path $TestDrive 'profile-download-exists'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles\bench') -Force | Out-Null
+        @('name: bench', 'apps:') | Set-Content -LiteralPath (Join-Path $repo 'profiles\bench\profile.yaml')
+
+        $message = $null
+        try {
+            Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics') -RepositoryRoot $repo
+        }
+        catch { $message = $_.Exception.Message }
+
+        $message | Should Match 'already exists'
+        $message | Should Match '--force'
+    }
+
     It 'previews remote profile download without downloading' {
         $repo = Join-Path $TestDrive 'profile-download-whatif'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Mock Save-WapGitHubProfileDefinition { throw 'download should not run during WhatIf' } -ModuleName WindowsAutoProfiles
+        Mock Save-WapGitHubProfileDefinition { throw 'download should not run during WhatIf' } -ModuleName WindowsAutoProfiles -Scope It
 
         $output = (Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics', '-WhatIf') -RepositoryRoot $repo *>&1 | Out-String)
 
@@ -1021,18 +1038,21 @@ Describe 'interactive Windows Sandbox capture' {
             versions = @()
         } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/captures/python/metadata.json') -Encoding UTF8
 
-        Invoke-WapCli -Command profile -Arguments @('winget', 'add', 'dev', 'Python.Python.3.13') -RepositoryRoot $repo
+        Invoke-WapCli -Command profile -Arguments @('winget', 'add', 'dev', 'Python.Python.3.13', '--version', '3.13.5') -RepositoryRoot $repo
         Invoke-WapCli -Command profile -Arguments @('winget', 'add', 'dev', 'Microsoft.VisualStudioCode', '--source', 'msstore') -RepositoryRoot $repo
 
         $profile = Import-WapProfile -Name dev -RepositoryRoot $repo
         @($profile.apps).Count | Should Be 2
         $profile.apps[0].id | Should Be 'Python.Python.3.13'
         $profile.apps[0].source | Should Be 'winget'
+        $profile.apps[0].version | Should Be '3.13.5'
         $profile.apps[0].enabled | Should Be $true
         $profile.apps[1].source | Should Be 'msstore'
+        $profile.apps[1].version | Should Be $null
 
         $list = (Invoke-WapCli -Command profile -Arguments @('winget', 'list', 'dev') -RepositoryRoot $repo *>&1 | Out-String)
         $list | Should Match 'Python\.Python\.3\.13'
+        $list | Should Match '3\.13\.5'
         $list | Should Match 'msstore'
         $list | Should Match 'True'
 
@@ -1134,6 +1154,7 @@ Describe 'interactive Windows Sandbox capture' {
             'apps:'
             '  - id: Python.Python.3.13'
             '    source: winget'
+            '    version: 3.13.5'
             '    enabled: true'
             '  - id: Disabled.Tool'
             '    source: winget'
@@ -1163,7 +1184,7 @@ Describe 'interactive Windows Sandbox capture' {
         $output = (Install-WapProfile -Name dev -RepositoryRoot $repo *>&1 | Out-String)
         $wingetArgs = Get-Content -LiteralPath $wingetLog -Raw
         $wingetArgs | Should Match 'list --id Python\.Python\.3\.13 --exact --accept-source-agreements'
-        $wingetArgs | Should Match 'install -e --id Python\.Python\.3\.13 --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity'
+        $wingetArgs | Should Match 'install -e --id Python\.Python\.3\.13 --source winget --version 3\.13\.5 --accept-package-agreements --accept-source-agreements --disable-interactivity'
         $wingetArgs | Should Not Match 'Disabled\.Tool'
         $output | Should Match 'Packages: 2 declared \(1 enabled\)'
         $output | Should Match '\[install\] Python\.Python\.3\.13'
