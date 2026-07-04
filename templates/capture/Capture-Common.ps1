@@ -73,11 +73,20 @@ function Get-CaptureCurrentUser {
 
 function ConvertTo-CaptureJsonArray {
     param(
-        [Parameter(Mandatory)] $Items,
+        [AllowNull()][AllowEmptyCollection()][object[]] $Items = @(),
         [int] $Depth = 8
     )
 
-    $array = if ($Items -is [System.Collections.ArrayList]) { @($Items.ToArray()) } else { @($Items) }
+    $array = if ($null -eq $Items) {
+        @()
+    }
+    elseif ($Items -is [System.Collections.ArrayList]) {
+        @($Items.ToArray())
+    }
+    else {
+        @($Items | Where-Object { $null -ne $_ })
+    }
+    if ($array.Count -eq 0) { return '[]' }
     ConvertTo-Json -InputObject $array -Depth $Depth
 }
 

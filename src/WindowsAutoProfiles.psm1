@@ -1060,26 +1060,11 @@ function Import-WapProfile {
         }
     }
 
-    $packages = @()
-    if ($raw.PSObject.Properties['apps'] -and $raw.apps) {
-        foreach ($app in @($raw.apps)) {
-            if ($app -is [string]) {
-                $packages += [pscustomobject]@{ id = $app; source = 'winget'; enabled = $true }
-            }
-            else {
-                $id = if ($app -is [System.Collections.IDictionary]) { $app['id'] } else { $app.id }
-                $source = if ($app -is [System.Collections.IDictionary]) { $app['source'] } else { $app.source }
-                $enabled = if ($app -is [System.Collections.IDictionary]) { $app['enabled'] } else {
-                    if ($app.PSObject.Properties['enabled']) { $app.enabled } else { $null }
-                }
-                if (-not $id) { throw "Every app in '$Name' must have an id." }
-                $packages += [pscustomobject]@{
-                    id = [string]$id
-                    source = if ($source) { [string]$source } else { 'winget' }
-                    enabled = ConvertFrom-WapEnabledValue $enabled
-                }
-            }
-        }
+    try {
+        $packages = @(ConvertTo-WapPackageList -Apps $(if ($raw.PSObject.Properties['apps']) { $raw.apps } else { $null }))
+    }
+    catch {
+        throw "Invalid apps section in '$Name': $($_.Exception.Message)"
     }
 
     $captureReferences = @()
@@ -1272,10 +1257,38 @@ function Get-WapProfileCapturePlan {
                     enabled = [bool]$reference.enabled
                     selectedVersion = $selected
                     replayVersions = @($selectedVersions)
+                    root = $captureRoot
                     manifestPath = $manifestPath
+                    captureProfilePath = (Join-Path $captureRoot 'profile.yaml')
                 }
             }
     )
+}
+
+function ConvertTo-WapPackageList {
+    param([AllowNull()] $Apps)
+
+    $packages = @()
+    if (-not $Apps) { return @() }
+    foreach ($app in @($Apps)) {
+        if ($app -is [string]) {
+            $packages += [pscustomobject]@{ id = $app; source = 'winget'; enabled = $true }
+        }
+        else {
+            $id = if ($app -is [System.Collections.IDictionary]) { $app['id'] } else { $app.id }
+            $source = if ($app -is [System.Collections.IDictionary]) { $app['source'] } else { $app.source }
+            $enabled = if ($app -is [System.Collections.IDictionary]) { $app['enabled'] } else {
+                if ($app.PSObject.Properties['enabled']) { $app.enabled } else { $null }
+            }
+            if (-not $id) { throw 'Every app entry must have an id.' }
+            $packages += [pscustomobject]@{
+                id = [string]$id
+                source = if ($source) { [string]$source } else { 'winget' }
+                enabled = ConvertFrom-WapEnabledValue $enabled
+            }
+        }
+    }
+    return @($packages)
 }
 
 function Invoke-WapWinget {
@@ -1532,8 +1545,48 @@ function Install-WapProfile {
         }
         $replay = if ($capture.replayVersions.Count) { ($capture.replayVersions -join ', ') } else { 'base only' }
         Write-Host "    [capture] $($capture.id) selected=$($capture.selectedVersion) replay=$replay"
-        Write-WapProfileInstallStatus -ItemType 'capture' -State 'applying' -ItemId $capture.id -Index $captureIndex -Total $capturePlan.Count
-        Write-WapProfileInstallStatus -ItemType 'capture' -State 'applied' -ItemId $capture.id -Index $captureIndex -Total $capturePlan.Count
+        $capturePackages = @(Import-WapCaptureProfilePackages -CaptureRoot $capture.root -CaptureId $capture.id)
+        $enabledCapturePackages = @($capturePackages | Where-Object { $_.enabled })
+        if ($capturePackages.Count) {
+            Write-Host "      Packages: $($capturePackages.Count) declared ($($enabledCapturePackages.Count) enabled)"
+        }
+        $capturePackageIndex = 0
+        foreach ($package in $capturePackages) {
+            $capturePackageIndex++
+            $statusItemId = "$($capture.id)/$($package.id)"
+            if (-not $package.enabled) {
+                Write-Host "        [skipped] $($package.id) (source: $($package.source); disabled)"
+                Write-WapProfileInstallStatus -ItemType 'capture package' -State 'skipped' -ItemId $statusItemId -Index $capturePackageIndex -Total $capturePackages.Count
+                continue
+            }
+            Write-Host "        [check] $($package.id) (source: $($package.source))"
+            Write-WapProfileInstallStatus -ItemType 'capture package' -State 'checking' -ItemId $statusItemId -Index $capturePackageIndex -Total $capturePackages.Count
+            try {
+                if ($PSCmdlet.ShouldProcess($package.id, "Install winget package for capture '$($capture.id)'")) {
+                    $winget = Get-Command winget -ErrorAction SilentlyContinue
+                    if (-not $winget) { throw 'winget was not found. Install App Installer or rerun with -WhatIf.' }
+                    & $winget.Source list --id $package.id --exact --accept-source-agreements | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "        [ready] $($package.id) is already installed"
+                        Write-WapProfileInstallStatus -ItemType 'capture package' -State 'ready' -ItemId $statusItemId -Index $capturePackageIndex -Total $capturePackages.Count
+                        continue
+                    }
+                    Write-Host "        [install] $($package.id)"
+                    Write-WapProfileInstallStatus -ItemType 'capture package' -State 'installing' -ItemId $statusItemId -Index $capturePackageIndex -Total $capturePackages.Count
+                    $installArguments = Get-WapWingetInstallArguments -Id $package.id -Source $package.source
+                    Invoke-WapWingetInstall -WingetPath $winget.Source -Arguments $installArguments -PackageId $package.id -Source $package.source
+                    $installedPackages += $package.id
+                    Write-Host "        [installed] $($package.id)"
+                    Write-WapProfileInstallStatus -ItemType 'capture package' -State 'installed' -ItemId $statusItemId -Index $capturePackageIndex -Total $capturePackages.Count
+                }
+            }
+            catch {
+                Write-WapProfileInstallStatus -ItemType 'capture package' -State 'failed' -ItemId $statusItemId -Index $capturePackageIndex -Total $capturePackages.Count -ErrorMessage $_.Exception.Message
+                throw
+            }
+        }
+        Write-Host "      [recorded] capture metadata"
+        Write-WapProfileInstallStatus -ItemType 'capture' -State 'recorded' -ItemId $capture.id -Index $captureIndex -Total $capturePlan.Count
     }
 
     Write-Host "  Shortcuts: $($profile.shortcuts.Count) declared"
@@ -1552,7 +1605,7 @@ function Install-WapProfile {
             sharedRoot = $profile.sharedRoot
             directories = @($profile.directories.Values)
             createdDirectories = @($createdDirectories)
-            packages = @($enabledApps.id)
+            packages = @($enabledApps | ForEach-Object { $_.id })
             installedPackages = @($installedPackages)
             shortcuts = @($createdShortcuts)
             captures = @($enabledCapturePlan)
@@ -3304,6 +3357,101 @@ function Set-WapProfileCaptureReferences {
     Set-WapProfileDefinitionLists -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $profile.apps -Captures $Captures
 }
 
+function Get-WapCaptureWingetPackagesFromManifest {
+    param([Parameter(Mandatory)] $Manifest)
+
+    $packages = @()
+    foreach ($package in @(Read-WapCaptureJsonItems (Get-WapObjectProperty -Object $Manifest -Name newWingetPackages))) {
+        $packageId = if ($package -is [string]) { [string]$package } else { [string]$package.id }
+        if ([string]::IsNullOrWhiteSpace($packageId)) { continue }
+        $source = if ($package -isnot [string] -and $package.PSObject.Properties['source'] -and
+            -not [string]::IsNullOrWhiteSpace([string]$package.source)) {
+            [string]$package.source
+        }
+        else { 'winget' }
+        if ($packages | Where-Object { $_.id -eq $packageId -and $_.source -eq $source }) { continue }
+        $packages += [pscustomobject]@{
+            id = $packageId
+            source = $source
+            enabled = $true
+        }
+    }
+    return @($packages)
+}
+
+function Set-WapCaptureProfilePackages {
+    param(
+        [Parameter(Mandatory)][string] $CaptureRoot,
+        [Parameter(Mandatory)][string] $CaptureId,
+        [AllowNull()][object[]] $Packages = @()
+    )
+
+    $path = Join-Path $CaptureRoot 'profile.yaml'
+    $lines = @(
+        '# WindowsAutoProfiles capture profile'
+        "name: $(ConvertTo-WapYamlScalar $CaptureId)"
+        'apps:'
+    )
+    foreach ($package in @($Packages | Where-Object { $null -ne $_ })) {
+        $lines += "  - id: $(ConvertTo-WapYamlScalar ([string]$package.id))"
+        $source = if ($package.source) { [string]$package.source } else { 'winget' }
+        $lines += "    source: $(ConvertTo-WapYamlScalar $source)"
+        $enabled = if ($package.PSObject.Properties['enabled']) { [bool]$package.enabled } else { $true }
+        $lines += "    enabled: $($enabled.ToString().ToLowerInvariant())"
+    }
+    $lines | Set-Content -LiteralPath $path -Encoding utf8
+}
+
+function Test-WapCaptureProfilePackages {
+    param(
+        [Parameter(Mandatory)] $Manifest,
+        [Parameter(Mandatory)][string] $ProfilePath,
+        [Parameter(Mandatory)][string] $CaptureId
+    )
+
+    $expected = @(Get-WapCaptureWingetPackagesFromManifest -Manifest $Manifest)
+    if (-not $expected.Count -and -not (Test-Path -LiteralPath $ProfilePath -PathType Leaf)) { return }
+    if (-not (Test-Path -LiteralPath $ProfilePath -PathType Leaf)) {
+        throw "Capture '$CaptureId' has $($expected.Count) winget package delta(s), but capture profile '$ProfilePath' was not found."
+    }
+    $actual = @(Import-WapCaptureProfilePackages -CaptureRoot (Split-Path -Parent $ProfilePath) -CaptureId $CaptureId)
+    foreach ($package in $expected) {
+        $match = @($actual | Where-Object { $_.id -eq $package.id -and $_.source -eq $package.source })
+        if (-not $match.Count) {
+            throw "Capture '$CaptureId' profile '$ProfilePath' is missing winget package '$($package.id)' from source '$($package.source)'."
+        }
+    }
+    foreach ($package in $actual) {
+        if (-not (@($expected | Where-Object { $_.id -eq $package.id -and $_.source -eq $package.source }).Count)) {
+            throw "Capture '$CaptureId' profile '$ProfilePath' has extra winget package '$($package.id)' from source '$($package.source)' not present in the capture manifest."
+        }
+    }
+}
+
+function Import-WapCaptureProfilePackages {
+    param(
+        [Parameter(Mandatory)][string] $CaptureRoot,
+        [Parameter(Mandatory)][string] $CaptureId
+    )
+
+    $path = Join-Path $CaptureRoot 'profile.yaml'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return @() }
+    $yaml = Get-Content -LiteralPath $path -Raw
+    $yamlCommand = Get-Command ConvertFrom-Yaml -ErrorAction SilentlyContinue
+    if ($yamlCommand) {
+        $raw = $yaml | ConvertFrom-Yaml
+    }
+    else {
+        $raw = ConvertFrom-WapSimpleYaml $yaml
+    }
+    try {
+        return @(ConvertTo-WapPackageList -Apps $(if ($raw.PSObject.Properties['apps']) { $raw.apps } else { $null }))
+    }
+    catch {
+        throw "Invalid apps section in capture '$CaptureId' profile '$path': $($_.Exception.Message)"
+    }
+}
+
 function Add-WapProfileWingetPackage {
     param(
         [Parameter(Mandatory)][string] $ProfileName,
@@ -3462,6 +3610,8 @@ function Add-WapProfileCapture {
         $manifest.safety.msixGenerated -ne $false) {
         throw 'Capture manifest does not declare the required dry-run safety state.'
     }
+    $sourceCaptureProfilePath = Join-Path $captureRoot 'output/profile.yaml'
+    Test-WapCaptureProfilePackages -Manifest $manifest -ProfilePath $sourceCaptureProfilePath -CaptureId $CaptureName
 
     $idSource = if ($CaptureId) { $CaptureId } else { $CaptureName }
     $id = Get-WapProfileCaptureId $idSource
@@ -3478,6 +3628,11 @@ function Add-WapProfileCapture {
 
     New-Item -ItemType Directory -Path $targetRoot -Force | Out-Null
     Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $targetRoot 'capture-manifest.json')
+    if (Test-Path -LiteralPath $sourceCaptureProfilePath -PathType Leaf) {
+        Copy-Item -LiteralPath $sourceCaptureProfilePath -Destination (Join-Path $targetRoot 'profile.yaml')
+        $copiedPackages = @(Import-WapCaptureProfilePackages -CaptureRoot $targetRoot -CaptureId $id)
+        Set-WapCaptureProfilePackages -CaptureRoot $targetRoot -CaptureId $id -Packages $copiedPackages
+    }
     $filterPath = Join-Path $captureRoot 'capture-filters.json'
     if (Test-Path -LiteralPath $filterPath -PathType Leaf) {
         Copy-Item -LiteralPath $filterPath -Destination (Join-Path $targetRoot 'capture-filters.json')
@@ -3506,28 +3661,11 @@ function Add-WapProfileCapture {
     } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $targetRoot 'metadata.json') -Encoding UTF8
 
     $references += [pscustomobject]@{ id = $id; enabled = $true }
-    $packages = @($profile.apps)
-    $addedPackages = @()
-    foreach ($package in @(Read-WapCaptureJsonItems (Get-WapObjectProperty -Object $manifest -Name newWingetPackages))) {
-        $packageId = if ($package -is [string]) { [string]$package } else { [string]$package.id }
-        if ([string]::IsNullOrWhiteSpace($packageId)) { continue }
-        $source = if ($package -isnot [string] -and $package.PSObject.Properties['source'] -and
-            -not [string]::IsNullOrWhiteSpace([string]$package.source)) {
-            [string]$package.source
-        }
-        else { 'winget' }
-        if ($packages | Where-Object { $_.id -eq $packageId -and $_.source -eq $source }) { continue }
-        $packages += [pscustomobject]@{
-            id = $packageId
-            source = $source
-            enabled = $true
-        }
-        $addedPackages += "$packageId (source: $source)"
-    }
-    Set-WapProfileDefinitionLists -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $packages -Captures $references
+    $capturePackages = @(Import-WapCaptureProfilePackages -CaptureRoot $targetRoot -CaptureId $id)
+    Set-WapProfileDefinitionLists -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $profile.apps -Captures $references
     Write-Host "Added capture '$id' to profile '$ProfileName'."
-    foreach ($package in $addedPackages) {
-        Write-Host "Added Sandbox-detected winget package '$package' to profile '$ProfileName'."
+    foreach ($package in @($capturePackages)) {
+        Write-Host "Added Sandbox-detected winget package '$($package.id) (source: $($package.source))' to capture '$id'."
     }
 }
 
@@ -3598,7 +3736,7 @@ function Set-WapProfileCaptureEnabled {
             enabled = if ($_.id -eq $id) { $Enabled } else { [bool]$_.enabled }
         }
     })
-    Set-WapProfileCaptureReferences -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Captures $references
+    Set-WapProfileDefinitionLists -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $profile.apps -Captures $references
     $stateText = if ($Enabled) { 'enabled' } else { 'disabled' }
     Write-Host "Capture '$id' is now $stateText on profile '$ProfileName'."
 }
@@ -3628,7 +3766,14 @@ function Add-WapProfileCaptureReference {
     }
     $references = @($profile.captures)
     $references += [pscustomobject]@{ id = $id; enabled = $Enabled }
-    Set-WapProfileCaptureReferences -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Captures $references
+    if ($Enabled) {
+        $captureProfilePath = Join-Path $captureRoot 'profile.yaml'
+        if (-not (Test-Path -LiteralPath $captureProfilePath -PathType Leaf)) {
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            Set-WapCaptureProfilePackages -CaptureRoot $captureRoot -CaptureId $id -Packages (Get-WapCaptureWingetPackagesFromManifest -Manifest $manifest)
+        }
+    }
+    Set-WapProfileDefinitionLists -ProfileName $ProfileName -RepositoryRoot $RepositoryRoot -Packages $profile.apps -Captures $references
     $stateText = if ($Enabled) { 'enabled' } else { 'disabled' }
     Write-Host "Capture '$id' was added to profile.yaml and is now $stateText on profile '$ProfileName'."
 }
@@ -4013,6 +4158,7 @@ function Show-WapCaptureDiff {
     }
     else { @() })
     $newServices = @($manifest.newServices | Where-Object { $null -ne $_ })
+    $newWingetPackages = @(Read-WapCaptureJsonItems (Get-WapObjectProperty -Object $manifest -Name newWingetPackages))
     $newShortcuts = @($manifest.newShortcuts | Where-Object { $null -ne $_ })
     $uninstallCommands = @($manifest.suspectedUninstallCommands | Where-Object { $null -ne $_ })
     $hasFilteredUninstallCommands = $null -ne $manifest.PSObject.Properties['filteredUninstallCommands']
@@ -4031,6 +4177,7 @@ function Show-WapCaptureDiff {
         Write-Host "  Filtered registry noise:      $($filteredRegistry.Count)"
     }
     Write-Host "  New services:                 $($newServices.Count)"
+    Write-Host "  New winget packages:          $($newWingetPackages.Count)"
     Write-Host "  New shortcuts:                $($newShortcuts.Count)"
     Write-Host "  Suspected uninstall commands: $($uninstallCommands.Count)"
     if ($hasFilteredUninstallCommands) {
@@ -4049,6 +4196,10 @@ function Show-WapCaptureDiff {
     if ($newServices.Count) {
         Write-Host "`nNew services:"
         $newServices | Select-Object Name, DisplayName, StartMode, PathName | Format-Table -AutoSize
+    }
+    if ($newWingetPackages.Count) {
+        Write-Host "`nNew winget packages:"
+        $newWingetPackages | Select-Object id, source | Format-Table -AutoSize
     }
     if ($newShortcuts.Count) {
         Write-Host "`nNew shortcuts:"
@@ -4071,6 +4222,8 @@ function Test-WapInteractiveCapture {
         $manifest.safety.msixGenerated -ne $false) {
         throw 'Capture manifest does not declare the required dry-run safety state.'
     }
+    $captureRoot = Get-WapCaptureSessionPath -Name $Name -RepositoryRoot $RepositoryRoot
+    Test-WapCaptureProfilePackages -Manifest $manifest -ProfilePath (Join-Path $captureRoot 'output/profile.yaml') -CaptureId $Name
     Write-Host "Capture '$Name' manifest validated."
     Show-WapCaptureDiff -Name $Name -RepositoryRoot $RepositoryRoot
 }

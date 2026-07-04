@@ -225,10 +225,26 @@ $manifest = [ordered]@{
 }
 $manifest | ConvertTo-Json -Depth 12 |
     Set-Content -LiteralPath $manifestPath -Encoding UTF8
+
+$captureProfilePath = Join-Path $output 'profile.yaml'
+$captureProfileLines = @(
+    '# WindowsAutoProfiles capture profile'
+    "name: $($manifest.profileName)"
+    'apps:'
+)
+foreach ($package in @($newWingetPackages)) {
+    if (-not $package.id) { continue }
+    $source = if ($package.source) { [string]$package.source } else { 'winget' }
+    $captureProfileLines += "  - id: $($package.id)"
+    $captureProfileLines += "    source: $source"
+    $captureProfileLines += '    enabled: true'
+}
+$captureProfileLines | Set-Content -LiteralPath $captureProfilePath -Encoding UTF8
 Write-Progress -Id 11 -Activity 'Computing capture diff' -Completed
 
 Write-Host ''
 Write-Host "Capture finalized to $manifestPath"
+Write-Host "Capture profile:             $captureProfilePath"
 Write-Host "Added files:                 $($addedFiles.Count)"
 Write-Host "Filtered file noise:         $($filteredAddedFiles.Count)"
 Write-Host "Changed registry keys:       $($changedRegistryKeys.Count)"

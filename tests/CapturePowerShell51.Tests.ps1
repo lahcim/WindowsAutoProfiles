@@ -106,6 +106,17 @@ $roundTrip = @(Read-CaptureJsonItems -Path $arrayPath)
 if ($roundTrip.Count -ne 2) {
     throw 'PowerShell 5.1 JSON array normalization failed.'
 }
+$emptyArrayPath = Join-Path $WorkRoot 'empty-array.json'
+ConvertTo-CaptureJsonArray -Items @() -Depth 3 |
+    Set-Content -LiteralPath $emptyArrayPath -Encoding UTF8
+$emptyRaw = (Get-Content -LiteralPath $emptyArrayPath -Raw).Trim()
+if ($emptyRaw -ne '[]') {
+    throw "PowerShell 5.1 empty JSON array normalization wrote '$emptyRaw'."
+}
+$emptyRoundTrip = @(Read-CaptureJsonItems -Path $emptyArrayPath)
+if ($emptyRoundTrip.Count -ne 0) {
+    throw 'PowerShell 5.1 empty JSON array round-trip should produce zero items.'
+}
 
 $originalPath = $env:Path
 try {
