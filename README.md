@@ -7,7 +7,7 @@ configuration discovered in Windows Sandbox.
 
 Version: 1.1
 
-Last updated: 2026-07-04T07:21:54Z
+Last updated: 2026-07-04T07:55:03Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -45,6 +45,35 @@ Use GitHub folder URLs in this format:
 ```text
 https://github.com/<owner>/<repo>/tree/<branch>/<path-to-profile-folder>
 ```
+
+## Installed package behavior
+
+When installed from the MSI, WAP is installed per user under:
+
+```text
+%LOCALAPPDATA%\WindowsAutoProfiles
+```
+
+The MSI adds that install folder to the current user's `PATH` and includes a
+`wap.cmd` shim, so after opening a new terminal you can run:
+
+```powershell
+wap install https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+```
+
+The first run initializes config and state beside the installed script:
+
+```text
+%LOCALAPPDATA%\WindowsAutoProfiles\wap.config.json
+%LOCALAPPDATA%\WindowsAutoProfiles\wap.settings.json
+%LOCALAPPDATA%\WindowsAutoProfiles\.wap-state.json
+%LOCALAPPDATA%\WindowsAutoProfiles\profiles\
+%LOCALAPPDATA%\WindowsAutoProfiles\.logs\
+```
+
+Default profile workspaces are still created under `%USERPROFILE%\Workspaces`.
+The ZIP package also contains `wap.cmd`, but extracting the ZIP does not modify
+`PATH`.
 
 ## Why use WAP?
 

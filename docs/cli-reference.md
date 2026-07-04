@@ -2,12 +2,26 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T07:15:58Z
+Last updated: 2026-07-04T07:55:03Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
 This is the expanded command reference for `wap.ps1`. Run commands from the
 repository root unless stated otherwise.
+
+When WAP is installed from the MSI, the installer adds the per-user install
+folder to `PATH` and provides `wap.cmd`, so commands can also be run as `wap`
+from any new terminal:
+
+```powershell
+wap install https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+```
+
+The MSI installs under `%LOCALAPPDATA%\WindowsAutoProfiles`. On first run, WAP
+initializes `wap.config.json`, `wap.settings.json`, `.wap-state.json`,
+`profiles\`, and `.logs\` in that folder. Default profile workspaces are created
+under `%USERPROFILE%\Workspaces`. The ZIP package includes `wap.cmd` but does
+not modify `PATH`.
 
 ## Global commands and options
 

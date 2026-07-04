@@ -58,7 +58,10 @@ function New-WapDeterministicGuid {
     try {
         $bytes = [Text.Encoding]::UTF8.GetBytes($Key.ToLowerInvariant())
         $hash = $md5.ComputeHash($bytes)
-        return ([guid]::new($hash[0..15])).ToString('B').ToUpperInvariant()
+        $guidBytes = New-Object byte[] 16
+        [Array]::Copy($hash, $guidBytes, 16)
+        $guid = New-Object -TypeName System.Guid -ArgumentList (,$guidBytes)
+        return $guid.ToString('B').ToUpperInvariant()
     }
     finally {
         $md5.Dispose()

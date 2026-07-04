@@ -5,7 +5,7 @@ and expected command output.
 
 Version: 1.1
 
-Last updated: 2026-07-04T07:15:58Z
+Last updated: 2026-07-04T07:55:03Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -14,6 +14,19 @@ Run all commands from the repository root:
 ```powershell
 Set-Location C:\src\WindowsAutoProfiles
 ```
+
+If WAP is installed from the MSI, the installer adds the per-user install
+folder to `PATH`, so you can run `wap` from any new terminal:
+
+```powershell
+wap install https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics
+```
+
+The MSI installs under `%LOCALAPPDATA%\WindowsAutoProfiles`, includes
+`wap.cmd`, and initializes `wap.config.json`, `wap.settings.json`,
+`.wap-state.json`, `profiles\`, and `.logs\` in that same folder on first run.
+Default profile workspaces are created under `%USERPROFILE%\Workspaces`. The ZIP
+package includes `wap.cmd` but does not add anything to `PATH`.
 
 ## Command overview
 
