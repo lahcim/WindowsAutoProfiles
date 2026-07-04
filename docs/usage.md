@@ -5,7 +5,7 @@ and expected command output.
 
 Version: 1.1
 
-Last updated: 2026-07-04T05:14:31Z
+Last updated: 2026-07-04T06:56:18Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -138,7 +138,8 @@ file. By default, it points to `wap.settings.json` beside `wap.ps1`.
 ```
 
 `wap.settings.json` controls where workspaces are created, where profile
-definitions are stored, and how command logging behaves.
+definitions are stored, how command logging behaves, and whether Sandbox
+capture bootstraps WinGet by default.
 
 ```json
 {
@@ -147,7 +148,11 @@ definitions are stored, and how command logging behaves.
   "profilesRoot": "profiles",
   "logging": {
     "enabled": true,
-    "retentionDays": 30
+    "retentionDays": 30,
+    "root": ".logs"
+  },
+  "sandbox": {
+    "installWinget": true
   }
 }
 ```

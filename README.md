@@ -7,7 +7,7 @@ configuration discovered in Windows Sandbox.
 
 Version: 1.1
 
-Last updated: 2026-07-04T06:48:40Z
+Last updated: 2026-07-04T06:56:18Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -219,10 +219,16 @@ A profile is a directory under `<profilesRoot>\<name>\` containing
 `profile.yaml`. It describes packages, workspace folders, environment
 variables, PATH entries, and shortcuts for one workspace.
 
-### Configuration roots
+### Configuration files
 
-`wap.config.json` is a small bootstrap file that points to the full settings
-file:
+WAP uses a two-file configuration model:
+
+- `wap.config.json` is the repository-local entry point.
+- `wap.settings.json` is the full settings file.
+
+The local bootstrap file can also redirect to another bootstrap config with
+`bootstrapConfigPath`, which lets one repository checkout point at settings and
+profiles stored in OneDrive or another synced folder.
 
 ```json
 {
@@ -231,15 +237,34 @@ file:
 }
 ```
 
-The full settings file controls workspace and profile-definition roots:
+The full settings file supports the current schema:
 
 ```json
 {
   "version": 1,
   "workspaceRoot": "%USERPROFILE%\\Workspaces",
-  "profilesRoot": "%OneDrive%\\WindowsAutoProfiles\\profiles"
+  "profilesRoot": "profiles",
+  "logging": {
+    "enabled": true,
+    "retentionDays": 30,
+    "root": ".logs"
+  },
+  "sandbox": {
+    "installWinget": true
+  }
 }
 ```
+
+| Key | Default | Purpose |
+|---|---|---|
+| `bootstrapConfigPath` | local `wap.config.json` | Optional local redirect to another bootstrap config. |
+| `configPath` | `wap.settings.json` | Path from the active bootstrap config to the full settings file. |
+| `workspaceRoot` | `%USERPROFILE%\Workspaces` | Root where installed profile workspaces are created. |
+| `profilesRoot` | `profiles` | Root containing profile definitions and attached captures. |
+| `logging.enabled` | `true` | Enables per-command detailed logs. |
+| `logging.retentionDays` | `30` | Deletes generated logs older than this many days; `0` disables automatic deletion. |
+| `logging.root` | `.logs` | Directory for generated command logs. |
+| `sandbox.installWinget` | `true` | Bootstraps WinGet in Sandbox before capture baseline by default. |
 
 Environment-variable tokens are stored literally in JSON and expanded at
 runtime. For a profile named `developer`, WAP derives:
@@ -271,40 +296,73 @@ sharedRoot  = <workspaceRoot>\_Shared
 `profile deactivate` reverses the environment changes WAP recorded during
 activation. It does not uninstall packages, delete folders, or remove shortcuts.
 
-## Common commands
+## Command reference
+
+Run `.\wap.ps1 --help` for the authoritative command list. Current commands:
 
 ```powershell
+.\wap.ps1 --help
+.\wap.ps1 --examples
 .\wap.ps1 init
+.\wap.ps1 init --skip-prereqs
 .\wap.ps1 config show
+.\wap.ps1 config set bootstrapConfigPath <path>
+.\wap.ps1 config set configPath <path>
 .\wap.ps1 config set workspaceRoot C:\Workspaces
+.\wap.ps1 config set profilesRoot <path>
+.\wap.ps1 config set logging.enabled <true|false>
+.\wap.ps1 config set logging.retentionDays <days>
+.\wap.ps1 config set logging.root <path>
+.\wap.ps1 config set sandbox.installWinget <true|false>
+.\wap.ps1 logs cleanup
 
 .\wap.ps1 profile status
-.\wap.ps1 profile new developer
-.\wap.ps1 profile winget add developer Python.Python.3.13
-.\wap.ps1 profile winget add developer Microsoft.VisualStudioCode --source winget
-.\wap.ps1 profile winget list developer
-.\wap.ps1 profile winget disable developer Python.Python.3.13
+.\wap.ps1 profile list
 .\wap.ps1 profile show developer
+.\wap.ps1 profile new developer
 .\wap.ps1 profile install developer -WhatIf
 .\wap.ps1 profile install developer --sandbox
 .\wap.ps1 profile install developer
 .\wap.ps1 profile activate developer
 .\wap.ps1 profile deactivate developer
 .\wap.ps1 profile uninstall developer
+.\wap.ps1 profile uninstall developer --remove-user-data --remove-registry
 .\wap.ps1 profile cleanup developer --user-data --registry
+.\wap.ps1 profile cleanup developer --all
 .\wap.ps1 profile delete developer
 
+.\wap.ps1 profile winget add developer Python.Python.3.13
+.\wap.ps1 profile winget add developer Microsoft.VisualStudioCode --source winget
+.\wap.ps1 profile winget list developer
+.\wap.ps1 profile winget disable developer Python.Python.3.13
+.\wap.ps1 profile winget enable developer Python.Python.3.13
+.\wap.ps1 profile winget remove developer Python.Python.3.13
+
+.\wap.ps1 capture new package-list
 .\wap.ps1 capture start kicad
+.\wap.ps1 capture start kicad --no-winget
 .\wap.ps1 capture list
 .\wap.ps1 capture rename kicad electronics-kicad
 .\wap.ps1 capture validate electronics-kicad
+.\wap.ps1 capture diff electronics-kicad
+.\wap.ps1 capture applyfilter electronics-kicad
+.\wap.ps1 capture remove electronics-kicad
+
 .\wap.ps1 profile capture add developer electronics-kicad --id kicad --name "KiCad"
 .\wap.ps1 profile capture list developer
 .\wap.ps1 profile capture disable developer kicad
 .\wap.ps1 profile capture enable developer kicad
-.\wap.ps1 profile winget remove developer Python.Python.3.13
-.\wap.ps1 capture remove electronics-kicad
+.\wap.ps1 profile capture edit developer kicad --description "KiCad evidence"
+.\wap.ps1 profile capture copy developer kicad electronics
+.\wap.ps1 profile capture refresh electronics kicad kicad-refresh --apply
+.\wap.ps1 profile capture versions electronics kicad
+.\wap.ps1 profile capture select-version electronics kicad latest
+.\wap.ps1 profile capture merge electronics kicad --up-to v0001
+.\wap.ps1 profile capture remove developer kicad
 ```
+
+Most mutating commands support `-WhatIf`; every command supports the global
+`--no-log` option.
 
 Use `profile install <name> --sandbox` to open a disposable Windows Sandbox
 that installs one profile first, then remains open for manual
@@ -355,8 +413,11 @@ can be removed after they are no longer needed:
 
 ## Documentation
 
+- [Documentation index](docs/index.md)
 - [Usage and command reference](docs/usage.md)
+- [CLI reference](docs/cli-reference.md)
 - [Configuration reference](docs/configuration.md)
+- [Profile schema reference](docs/profile-schema.md)
 - [Scenario cookbook](docs/scenarios.md)
 - [Windows Sandbox capture](docs/capture.md)
 - [Capture refresh and versioning](docs/capture-versioning.md)
@@ -369,6 +430,8 @@ can be removed after they are no longer needed:
 wap.ps1                         CLI entry point
 src\WindowsAutoProfiles.psm1    PowerShell module implementation
 profiles\example\profile.yaml   Starter profile
+profiles\developer\             Developer example profile
+profiles\electronics\           Electronics example profile
 templates\capture\              Windows Sandbox capture templates
 docs\                           User and developer documentation
 tests\                          Pester tests
@@ -379,6 +442,7 @@ Runtime files are intentionally ignored by Git:
 ```text
 .wap-state.json
 .capture\
+.sandbox\
 .logs\
 ```
 

@@ -6,7 +6,7 @@ delete anything, or generate MSIX packages.
 
 Version: 1.1
 
-Last updated: 2026-07-04T04:14:10Z
+Last updated: 2026-07-04T06:56:18Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -111,7 +111,14 @@ That records the after-state, computes a diff, and writes:
 
 ```text
 C:\WAPCapture\output\capture-manifest.json
+C:\WAPCapture\output\profile.yaml
 ```
+
+`profile.yaml` is generated when the Sandbox diff detects new WinGet packages.
+Those package references belong to the capture, not to the parent profile.
+When the capture is attached to a profile, WAP copies this file to
+`profiles\<profile>\captures\<capture-id>\profile.yaml`; profile install then
+installs those capture-owned packages only when that capture is enabled.
 
 Back on the host, validate the finalized capture or view it again:
 
@@ -121,6 +128,10 @@ Back on the host, validate the finalized capture or view it again:
 .\wap.ps1 capture diff example
 .\wap.ps1 capture applyfilter example
 ```
+
+`capture validate` also checks that the capture-local `output\profile.yaml`
+matches `newWingetPackages` in `capture-manifest.json`. Missing references or
+extra package references are validation errors.
 
 If the capture name is not the one you want to use later, rename it before
 attaching it to profiles:

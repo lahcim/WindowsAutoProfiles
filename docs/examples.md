@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T04:14:10Z
+Last updated: 2026-07-04T06:56:18Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -100,6 +100,7 @@ This file is printed by:
    logging.enabled       : True
    logging.retentionDays : 30
    logging.root          : %LOCALAPPDATA%\WindowsAutoProfiles\Logs
+   sandbox.installWinget : True
 
    Dynamic resolved settings (read-only; computed at runtime from the configurable settings above):
 
