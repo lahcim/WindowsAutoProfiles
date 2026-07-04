@@ -7,6 +7,6 @@
     </MappedFolder>
   </MappedFolders>
   <LogonCommand>
-    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\WAPCapture\Capture-Startup.ps1</Command>
+    <Command>powershell.exe -NoProfile -NoExit -ExecutionPolicy Bypass -File C:\WAPCapture\Capture-Startup.ps1</Command>
   </LogonCommand>
 </Configuration>

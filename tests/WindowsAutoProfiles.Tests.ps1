@@ -430,6 +430,7 @@ Describe 'interactive Windows Sandbox capture' {
         Copy-Item -LiteralPath "$PSScriptRoot/../templates/capture" -Destination (Join-Path $repo 'templates/capture') -Recurse
         Mock Get-Command { [pscustomobject]@{ Source = 'WindowsSandbox.exe' } } `
             -ParameterFilter { $Name -eq 'WindowsSandbox.exe' } -ModuleName WindowsAutoProfiles
+        Mock Save-WapSandboxWingetPrerequisites {} -ModuleName WindowsAutoProfiles
         Mock Start-Process {
             $wsbPath = if ($ArgumentList -is [array]) { $ArgumentList[0] } else { $ArgumentList }
             $captureRoot = Split-Path -Parent $wsbPath
@@ -468,8 +469,13 @@ Describe 'interactive Windows Sandbox capture' {
         $wsb | Should Match ([regex]::Escape('<SandboxFolder>C:\WAPCapture</SandboxFolder>'))
         $wsb | Should Match ([regex]::Escape('<ReadOnly>false</ReadOnly>'))
         $wsb | Should Match 'Capture-Startup.ps1'
+        $wsb | Should Match '-NoExit'
         (Get-Content (Join-Path $captureRoot 'Capture-Startup.ps1') -Raw) | Should Match ([regex]::Escape('$installWinget = $true'))
-        (Get-Content (Join-Path $captureRoot 'Capture-Startup.ps1') -Raw) | Should Match 'Repair-WinGetPackageManager -AllUsers'
+        (Get-Content (Join-Path $captureRoot 'Capture-Startup.ps1') -Raw) | Should Match 'Sandbox startup'
+        (Get-Content (Join-Path $captureRoot 'Capture-Startup.ps1') -Raw) | Should Match 'Add-AppxPackage -Path'
+        (Get-Content (Join-Path $captureRoot 'Capture-Startup.ps1') -Raw) | Should Match 'Microsoft.VCLibs.140.00_14.0.33519.0_x64.appx'
+        (Get-Content (Join-Path $captureRoot 'Capture-Startup.ps1') -Raw) | Should Match 'Microsoft.WindowsAppRuntime.1.8_8000.616.304.0_x64.appx'
+        (Get-Content (Join-Path $captureRoot 'Capture-Startup.ps1') -Raw) | Should Not Match 'Install-Module'
         (Get-Content (Join-Path $captureRoot 'Capture-Baseline.ps1') -Raw) | Should Match 'Write-CaptureSnapshot'
         (Get-Content (Join-Path $captureRoot 'Capture-Baseline.ps1') -Raw) | Should Match 'BASELINE READY'
         (Get-Content (Join-Path $captureRoot 'Capture-Baseline.ps1') -Raw) | Should Match 'baseline-status.json'
@@ -482,6 +488,7 @@ Describe 'interactive Windows Sandbox capture' {
         $output | Should Match 'Sandbox winget bootstrap:\s+enabled'
         $session = Get-Content -LiteralPath (Join-Path $captureRoot 'session.json') -Raw | ConvertFrom-Json
         $session.sandbox.installWinget | Should Be $true
+        Assert-MockCalled Save-WapSandboxWingetPrerequisites 1 -ModuleName WindowsAutoProfiles -Scope It
         Assert-MockCalled Start-Process 1 -ModuleName WindowsAutoProfiles
     }
 
@@ -490,6 +497,7 @@ Describe 'interactive Windows Sandbox capture' {
         New-Item -ItemType Directory -Path (Join-Path $repo 'templates') -Force | Out-Null
         Copy-Item -LiteralPath "$PSScriptRoot/../templates/capture" -Destination (Join-Path $repo 'templates/capture') -Recurse
         Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        Mock Save-WapSandboxWingetPrerequisites {} -ModuleName WindowsAutoProfiles
         Mock Get-Command { $null } -ParameterFilter { $Name -eq 'WindowsSandbox.exe' } -ModuleName WindowsAutoProfiles
 
         $output = (Invoke-WapCli -Command capture -Arguments @('start', 'demo', '--no-winget') -RepositoryRoot $repo *>&1 | Out-String)
@@ -499,6 +507,43 @@ Describe 'interactive Windows Sandbox capture' {
         $session = Get-Content -LiteralPath (Join-Path $captureRoot 'session.json') -Raw | ConvertFrom-Json
         $session.sandbox.installWinget | Should Be $false
         $output | Should Match 'Sandbox winget bootstrap:\s+disabled'
+        Assert-MockCalled Save-WapSandboxWingetPrerequisites 0 -ModuleName WindowsAutoProfiles -Scope It
+    }
+
+    It 'fails fast when sandbox winget bootstrap writes an error' {
+        $repo = Join-Path $TestDrive 'sandbox-capture-winget-failure'
+        New-Item -ItemType Directory -Path (Join-Path $repo 'templates') -Force | Out-Null
+        Copy-Item -LiteralPath "$PSScriptRoot/../templates/capture" -Destination (Join-Path $repo 'templates/capture') -Recurse
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        Mock Get-Command { [pscustomobject]@{ Source = 'WindowsSandbox.exe' } } `
+            -ParameterFilter { $Name -eq 'WindowsSandbox.exe' } -ModuleName WindowsAutoProfiles
+        Mock Save-WapSandboxWingetPrerequisites {} -ModuleName WindowsAutoProfiles
+        Mock Start-Process {
+            $wsbPath = if ($ArgumentList -is [array]) { $ArgumentList[0] } else { $ArgumentList }
+            $captureRoot = Split-Path -Parent $wsbPath
+            $outputRoot = Join-Path $captureRoot 'output'
+            New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+            'Access is denied. (Exception from HRESULT: 0x80070005 (E_ACCESSDENIED))' |
+                Set-Content -LiteralPath (Join-Path $outputRoot 'winget-install-error.txt') -Encoding UTF8
+            [ordered]@{
+                phase = 'failed'
+                success = $false
+                updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+                error = 'Access is denied.'
+            } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputRoot 'startup-status.json') -Encoding UTF8
+            $process = New-Object psobject -Property @{ HasExited = $false }
+            $process | Add-Member -MemberType ScriptMethod -Name Refresh -Value {}
+            return $process
+        } -ModuleName WindowsAutoProfiles
+
+        $message = $null
+        try { Start-WapInteractiveCapture -Name demo -RepositoryRoot $repo }
+        catch { $message = $_.Exception.Message }
+
+        $message | Should Match 'Sandbox winget setup failed before baseline capture'
+        $message | Should Match 'winget-install\.log'
+        $message | Should Match 'winget-install-error\.txt'
+        $message | Should Match 'Access is denied'
     }
 
     It 'summarizes and validates a dry-run capture manifest' {

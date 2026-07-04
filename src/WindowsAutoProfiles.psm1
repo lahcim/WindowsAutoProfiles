@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 
 $script:WapMinimumPowerShellVersion = [version]'5.1'
 $script:WapVersion = '1.1'
-$script:WapLastUpdated = '2026-07-04T04:03:46Z'
+$script:WapLastUpdated = '2026-07-04T04:14:10Z'
 
 function Assert-WapPowerShellVersion {
     param(
@@ -1827,11 +1827,41 @@ function Wait-WapCaptureBaseline {
 
     $statusPath = Join-Path $CaptureRoot 'baseline/baseline-status.json'
     $snapshotPath = Join-Path $CaptureRoot 'baseline/snapshot.json'
+    $startupStatusPath = Join-Path $CaptureRoot 'output/startup-status.json'
+    $wingetLogPath = Join-Path $CaptureRoot 'output/winget-install.log'
+    $wingetErrorPath = Join-Path $CaptureRoot 'output/winget-install-error.txt'
     $started = Get-Date
     $lastReport = -15
+    $lastStartupPhase = $null
     Write-Host "Waiting for Sandbox baseline to finish (timeout: $TimeoutSeconds seconds)..."
     try {
         while ($true) {
+            if (Test-Path -LiteralPath $wingetErrorPath -PathType Leaf) {
+                $wingetError = (Get-Content -LiteralPath $wingetErrorPath -Raw -ErrorAction SilentlyContinue).Trim()
+                if ($wingetError.Length -gt 600) { $wingetError = $wingetError.Substring(0, 600) + '...' }
+                throw "Sandbox winget setup failed before baseline capture. $wingetError`nDetailed winget log: $wingetLogPath`nDetailed winget error: $wingetErrorPath"
+            }
+
+            if (Test-Path -LiteralPath $startupStatusPath -PathType Leaf) {
+                try {
+                    $startupStatus = Get-Content -LiteralPath $startupStatusPath -Raw | ConvertFrom-Json
+                    if ($startupStatus.success -eq $false -and $startupStatus.phase -eq 'failed') {
+                        throw "Sandbox startup failed before baseline capture: $($startupStatus.error). Detailed winget log: $wingetLogPath. Detailed winget error: $wingetErrorPath"
+                    }
+                    if ($startupStatus.phase -and $startupStatus.phase -ne $lastStartupPhase) {
+                        Write-Host "  Sandbox startup phase: $($startupStatus.phase)"
+                        if ($startupStatus.phase -eq 'installingWinget') {
+                            Write-Host "  Winget setup log: $wingetLogPath"
+                        }
+                        $lastStartupPhase = $startupStatus.phase
+                    }
+                }
+                catch {
+                    if ($_.Exception.Message -like 'Sandbox startup failed before baseline capture:*') { throw }
+                    # The Sandbox may still be writing the status file; retry.
+                }
+            }
+
             if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
                 try {
                     $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
@@ -1873,7 +1903,15 @@ function Wait-WapCaptureBaseline {
                 throw "Timed out waiting for baseline after $TimeoutSeconds seconds. Sandbox was left open; inspect '$CaptureRoot\output\baseline.log'."
             }
             if (($elapsed - $lastReport) -ge 15) {
-                Write-Host "  Still capturing baseline... $elapsed seconds elapsed"
+                if ($lastStartupPhase -and $lastStartupPhase -ne 'startingBaseline') {
+                    Write-Host "  Still waiting for Sandbox startup ($lastStartupPhase)... $elapsed seconds elapsed"
+                    if (Test-Path -LiteralPath $wingetLogPath -PathType Leaf) {
+                        Write-Host "  Winget setup log: $wingetLogPath"
+                    }
+                }
+                else {
+                    Write-Host "  Still capturing baseline... $elapsed seconds elapsed"
+                }
                 $lastReport = $elapsed
             }
             Write-Progress -Activity 'WindowsAutoProfiles Sandbox capture' -Status 'Recording baseline' `
@@ -1885,6 +1923,62 @@ function Wait-WapCaptureBaseline {
         Write-Progress -Activity 'WindowsAutoProfiles Sandbox capture' -Completed
     }
 }
+
+function Save-WapSandboxWingetPrerequisites {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $CaptureRoot)
+
+    $prereqRoot = Join-Path $CaptureRoot 'prereqs\winget'
+    $dependencyZipPath = Join-Path $prereqRoot 'DesktopAppInstaller_Dependencies.zip'
+    $dependencyExtractRoot = Join-Path $prereqRoot 'DesktopAppInstaller_Dependencies'
+    $vclibsPath = Join-Path $prereqRoot 'Microsoft.VCLibs.140.00_14.0.33519.0_x64.appx'
+    $vclibsDesktopPath = Join-Path $prereqRoot 'Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64.appx'
+    $windowsAppRuntimePath = Join-Path $prereqRoot 'Microsoft.WindowsAppRuntime.1.8_8000.616.304.0_x64.appx'
+    $appInstallerPath = Join-Path $prereqRoot 'Microsoft.DesktopAppInstaller.msixbundle'
+
+    New-Item -ItemType Directory -Path $prereqRoot -Force | Out-Null
+
+    if ((Test-Path -LiteralPath $vclibsPath -PathType Leaf) -and
+        (Test-Path -LiteralPath $vclibsDesktopPath -PathType Leaf) -and
+        (Test-Path -LiteralPath $windowsAppRuntimePath -PathType Leaf) -and
+        (Test-Path -LiteralPath $appInstallerPath -PathType Leaf)) {
+        Write-Host "  [reuse] Sandbox winget prerequisites: $prereqRoot"
+        return
+    }
+
+    Write-Host "  [download] Sandbox winget prerequisites: $prereqRoot"
+    if (-not (Test-Path -LiteralPath $appInstallerPath -PathType Leaf)) {
+        Write-Host '    Microsoft.DesktopAppInstaller.msixbundle'
+        Invoke-WebRequest -Uri 'https://github.com/microsoft/winget-cli/releases/download/v1.29.280/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' -OutFile $appInstallerPath -UseBasicParsing
+    }
+    if ((-not (Test-Path -LiteralPath $vclibsPath -PathType Leaf)) -or
+        (-not (Test-Path -LiteralPath $vclibsDesktopPath -PathType Leaf)) -or
+        (-not (Test-Path -LiteralPath $windowsAppRuntimePath -PathType Leaf))) {
+        if (-not (Test-Path -LiteralPath $dependencyZipPath -PathType Leaf)) {
+            Write-Host '    DesktopAppInstaller_Dependencies.zip'
+            Invoke-WebRequest -Uri 'https://github.com/microsoft/winget-cli/releases/download/v1.29.280/DesktopAppInstaller_Dependencies.zip' -OutFile $dependencyZipPath -UseBasicParsing
+        }
+        if (Test-Path -LiteralPath $dependencyExtractRoot -PathType Container) {
+            Remove-Item -LiteralPath $dependencyExtractRoot -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $dependencyExtractRoot -Force | Out-Null
+        Expand-Archive -LiteralPath $dependencyZipPath -DestinationPath $dependencyExtractRoot -Force
+
+        foreach ($dependencyName in @(
+                'Microsoft.VCLibs.140.00_14.0.33519.0_x64.appx',
+                'Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64.appx',
+                'Microsoft.WindowsAppRuntime.1.8_8000.616.304.0_x64.appx'
+            )) {
+            $dependency = Get-ChildItem -LiteralPath $dependencyExtractRoot -Recurse -File -Filter $dependencyName |
+                Select-Object -First 1
+            if (-not $dependency) {
+                throw "Could not find '$dependencyName' inside '$dependencyZipPath'."
+            }
+            Copy-Item -LiteralPath $dependency.FullName -Destination (Join-Path $prereqRoot $dependencyName) -Force
+        }
+    }
+}
+
 function Start-WapInteractiveCapture {
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -1928,6 +2022,9 @@ function Start-WapInteractiveCapture {
         foreach ($directory in @('baseline', 'after', 'output')) {
             New-Item -ItemType Directory -Path (Join-Path $captureRoot $directory) -Force | Out-Null
             Write-Host "  [created] $directory/"
+        }
+        if ($installWingetInSandbox) {
+            Save-WapSandboxWingetPrerequisites -CaptureRoot $captureRoot
         }
         foreach ($scriptName in @('Capture-Common.ps1', 'Capture-Baseline.ps1', 'Capture-Finalize.ps1', 'capture-filters.json')) {
             Copy-Item -LiteralPath (Join-Path $templateRoot $scriptName) -Destination (Join-Path $captureRoot $scriptName)
@@ -3027,7 +3124,7 @@ function Show-WapHelp {
     @'
 WindowsAutoProfiles
 Version: 1.1
-Last updated: 2026-07-04T04:03:46Z
+Last updated: 2026-07-04T04:14:10Z
 Author: Michal Zygmunt <lahcim@fajne.com>
 Minimum PowerShell: 5.1
 
@@ -3441,6 +3538,7 @@ Export-ModuleMember -Function @(
     'Remove-WapCaptureSession',
     'Rename-WapCaptureSession',
     'Show-WapCaptureSessions',
+    'Save-WapSandboxWingetPrerequisites',
     'Start-WapInteractiveCapture',
     'Test-WapInteractiveCapture',
     'Show-WapCaptureDiff',

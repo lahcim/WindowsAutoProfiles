@@ -6,7 +6,7 @@ delete anything, or generate MSIX packages.
 
 Version: 1.1
 
-Last updated: 2026-07-04T04:03:46Z
+Last updated: 2026-07-04T04:14:10Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -50,6 +50,9 @@ It contains:
 baseline/
 after/
 output/
+output/startup-status.json
+output/winget-install.log
+output/winget-install-error.txt
 sandbox.wsb
 session.json
 Capture-Common.ps1
@@ -60,8 +63,18 @@ Capture-Finalize.ps1
 
 The generated `sandbox.wsb` maps only `.capture/example` to
 `C:\WAPCapture` with read/write enabled. Its startup command runs
-`C:\WAPCapture\Capture-Startup.ps1`, which optionally bootstraps winget before
-running `C:\WAPCapture\Capture-Baseline.ps1`.
+`C:\WAPCapture\Capture-Startup.ps1` in a visible `powershell.exe -NoExit`
+window, which optionally bootstraps winget before running
+`C:\WAPCapture\Capture-Baseline.ps1`. Keep that window open; it shows Sandbox
+prerequisite setup and baseline progress. The winget bootstrap uses local
+packages staged by the host from the official winget release, including
+Microsoft VCLibs, Microsoft Windows App Runtime 1.8, and Microsoft App
+Installer.
+
+If winget setup fails, `capture start` fails fast and prints the last error plus
+the paths to `output\winget-install.log` and
+`output\winget-install-error.txt`. While winget setup is still running, the host
+prints the current Sandbox startup phase and the winget log path.
 
 The baseline records filesystem metadata under Program Files, Program Files
 (x86), ProgramData, AppData Roaming, AppData Local, and both user/common Start

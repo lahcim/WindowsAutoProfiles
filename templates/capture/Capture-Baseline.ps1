@@ -23,6 +23,8 @@ catch {
 }
 
 try {
+    Write-Host ''
+    Write-Host '=== WindowsAutoProfiles baseline capture ===' -ForegroundColor Cyan
     Write-Host 'WindowsAutoProfiles capture: recording baseline.'
     Write-Host 'Do not install applications until BASELINE READY is displayed.'
     Start-Sleep -Seconds 5

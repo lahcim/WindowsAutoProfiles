@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T04:03:46Z
+Last updated: 2026-07-04T04:14:10Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -117,8 +117,15 @@ Sandbox capture has its own logs inside the capture workspace:
 ```text
 .capture\<name>\output\baseline.log
 .capture\<name>\output\baseline-error.txt
+.capture\<name>\output\startup-status.json
+.capture\<name>\output\winget-install.log
+.capture\<name>\output\winget-install-error.txt
 .capture\<name>\baseline\baseline-status.json
 ```
+
+When Sandbox winget bootstrap fails before baseline capture starts, the host
+command fails fast and points to `winget-install.log` and
+`winget-install-error.txt`.
 
 Host command logs are still written under the resolved logging root (`.logs\`
 by default, or the custom `logging.root` directory if you configured one) when
