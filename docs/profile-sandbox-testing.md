@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T04:48:53Z
+Last updated: 2026-07-04T06:18:19Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -43,7 +43,15 @@ as OneDrive folders are not used inside Sandbox.
 After the initial install completes, use the visible Sandbox PowerShell window.
 It is left at `C:\WAPProfileSandbox\repo`.
 
+If PowerShell blocks scripts, enable script execution for only the current
+Sandbox PowerShell process:
+
 ```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+```
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 .\wap.ps1 profile list
 .\wap.ps1 profile show <profile>
 .\wap.ps1 profile install <profile>

@@ -1083,6 +1083,7 @@ Describe 'interactive Windows Sandbox capture' {
         $startup | Should Match 'profile install'
         $startup | Should Match 'WAP_PROFILE_INSTALL_STATUS_PATH'
         $startup | Should Match 'WAP_PROFILE_INSTALL_EVENTS_PATH'
+        $startup | Should Match 'Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force'
         $startup | Should Match 'profile activate <profile>'
         $startup | Should Match 'profile deactivate <profile>'
         $startup | Should Match 'profile uninstall <profile>'
@@ -1101,6 +1102,7 @@ Describe 'interactive Windows Sandbox capture' {
         $output | Should Match 'Sandbox launched'
         $output | Should Match 'Sandbox profile install step: package 2/2 skipped: Disabled\.Tool'
         $output | Should Match 'SANDBOX PROFILE INSTALL COMPLETE'
+        $output | Should Match 'Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force'
         $output | Should Match 'manual profile lifecycle testing'
         $output | Should Match 'C:\\WAPProfileSandbox\\profile-testing\.md'
         Assert-MockCalled Save-WapSandboxWingetPrerequisites 1 -ModuleName WindowsAutoProfiles -Scope It
