@@ -1904,6 +1904,8 @@ function Wait-WapCaptureBaseline {
                             Write-Host "Captured user profile: $($snapshot.currentUser.profilePath)"
                         }
                         Write-Host 'You may now interact with the Sandbox and install/configure applications.'
+                        Write-Host 'Optional: if you install tools that should be part of the baseline, rerun baseline capture inside Sandbox with:'
+                        Write-Host '  powershell.exe -ExecutionPolicy Bypass -File C:\WAPCapture\Capture-Baseline.ps1'
                         return
                     }
                     if ($status.success -eq $false) {
@@ -2102,7 +2104,7 @@ function Start-WapInteractiveCapture {
         else {
             Write-Warning 'Could not get the Windows Sandbox process handle; watch the Sandbox window for BASELINE READY before installing apps.'
         }
-        Write-Host 'Inside Sandbox, finalize with:'
+        Write-Host 'When the baseline is correct and application setup is finished, finalize inside Sandbox with:'
         Write-Host '  powershell.exe -ExecutionPolicy Bypass -File C:\WAPCapture\Capture-Finalize.ps1'
     }
 }

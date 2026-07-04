@@ -84,6 +84,17 @@ services and scheduled tasks. The host command waits until the baseline writes
 sandbox remains open afterward. Baseline and finalize scripts show PowerShell
 progress bars while capturing files, registry, services, tasks, and diffs.
 
+If you need additional tools to be treated as part of the baseline instead of
+as part of the captured application diff, install those tools after Sandbox
+launches and then rerun the baseline before finalizing:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File C:\WAPCapture\Capture-Baseline.ps1
+```
+
+Only run finalize after the baseline is correct and you have installed or
+configured the application changes you want to capture.
+
 The baseline and after snapshots record the Sandbox current user, including the
 qualified name, SID, elevation state, and profile path such as
 `C:\Users\WDAGUtilityAccount`. The finalized manifest carries this in

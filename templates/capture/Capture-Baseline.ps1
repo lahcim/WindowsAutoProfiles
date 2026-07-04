@@ -38,6 +38,8 @@ try {
     Write-Host ''
     Write-Host '=== BASELINE READY ===' -ForegroundColor Green
     Write-Host 'The sandbox will remain open. You may now install and configure applications.'
+    Write-Host 'Optional: if you install tools that should be part of the baseline, run this again before finalizing:'
+    Write-Host '  powershell.exe -ExecutionPolicy Bypass -File C:\WAPCapture\Capture-Baseline.ps1'
     Write-Host 'When finished, run:'
     Write-Host '  powershell.exe -ExecutionPolicy Bypass -File C:\WAPCapture\Capture-Finalize.ps1'
     Start-Process explorer.exe -ArgumentList 'C:\WAPCapture'
