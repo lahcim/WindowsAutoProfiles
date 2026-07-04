@@ -1,0 +1,31 @@
+# Created 2026-07-03T23:59:25.0576076-07:00
+# WindowsAutoProfiles profile
+name: network
+apps:
+  - id: Tailscale.Tailscale
+    source: winget
+    enabled: true
+  - id: OpenVPNTechnologies.OpenVPNConnect
+    source: winget
+    enabled: false
+  - id: MullvadVPN.MullvadVPN
+    source: winget
+    enabled: true
+  - id: WireGuard.WireGuard
+    source: winget
+    enabled: true
+  - id: WiresharkFoundation.Wireshark
+    source: winget
+    enabled: true
+env:
+  WAP_PROFILE: network
+path:
+  # - ${profileRoot}\Apps\bin
+projects: ${profileRoot}\Projects
+data: ${profileRoot}\Data
+downloads: ${profileRoot}\Downloads
+cache: ${profileRoot}\Cache
+shortcuts:
+  # - name: Example
+  #   target: ${profileRoot}\Apps\Example.exe
+captures:
