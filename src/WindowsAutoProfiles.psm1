@@ -1291,6 +1291,33 @@ function Invoke-WapWinget {
     if ($LASTEXITCODE -ne 0) { throw "$ErrorMessage (exit $LASTEXITCODE)." }
 }
 
+function Set-WapJsonFileContent {
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        [Parameter(Mandatory)][string] $Json
+    )
+
+    $tempPath = "$Path.$PID.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        $Json | Set-Content -LiteralPath $tempPath -Encoding UTF8
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+                Move-Item -LiteralPath $tempPath -Destination $Path -Force -ErrorAction Stop
+                return
+            }
+            catch {
+                if ($attempt -eq 5) { throw }
+                Start-Sleep -Milliseconds (100 * $attempt)
+            }
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempPath -PathType Leaf) {
+            Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Write-WapProfileInstallStatus {
     param(
         [Parameter(Mandatory)][string] $ItemType,
@@ -1302,6 +1329,7 @@ function Write-WapProfileInstallStatus {
     )
 
     $statusPath = $env:WAP_PROFILE_INSTALL_STATUS_PATH
+    $eventsPath = $env:WAP_PROFILE_INSTALL_EVENTS_PATH
     if ([string]::IsNullOrWhiteSpace($statusPath)) { return }
 
     $detail = if ($ItemId) {
@@ -1313,7 +1341,7 @@ function Write-WapProfileInstallStatus {
     }
 
     try {
-        [ordered]@{
+        $json = [ordered]@{
             phase = 'installingProfile'
             success = $false
             updatedAt = (Get-Date).ToUniversalTime().ToString('o')
@@ -1326,7 +1354,11 @@ function Write-WapProfileInstallStatus {
             error = $ErrorMessage
             log = $env:WAP_PROFILE_INSTALL_LOG_PATH
             errorLog = $env:WAP_PROFILE_INSTALL_ERROR_PATH
-        } | ConvertTo-Json | Set-Content -LiteralPath $statusPath -Encoding UTF8
+        } | ConvertTo-Json -Compress
+        Set-WapJsonFileContent -Path $statusPath -Json $json
+        if (-not [string]::IsNullOrWhiteSpace($eventsPath)) {
+            [IO.File]::AppendAllText($eventsPath, $json + [Environment]::NewLine, (New-Object Text.UTF8Encoding $false))
+        }
     }
     catch {
         Write-Warning "Could not write profile install status to '$statusPath': $($_.Exception.Message)"
@@ -1348,6 +1380,76 @@ function Get-WapWingetInstallArguments {
         '--accept-source-agreements',
         '--disable-interactivity'
     )
+}
+
+function Get-WapWingetInstallTimeoutSeconds {
+    $defaultTimeoutSeconds = 900
+    if ([string]::IsNullOrWhiteSpace($env:WAP_WINGET_INSTALL_TIMEOUT_SECONDS)) {
+        return $defaultTimeoutSeconds
+    }
+
+    $parsed = 0
+    if ([int]::TryParse($env:WAP_WINGET_INSTALL_TIMEOUT_SECONDS, [ref]$parsed) -and $parsed -gt 0) {
+        return $parsed
+    }
+
+    Write-Warning "Ignoring invalid WAP_WINGET_INSTALL_TIMEOUT_SECONDS value '$env:WAP_WINGET_INSTALL_TIMEOUT_SECONDS'. Using $defaultTimeoutSeconds seconds."
+    return $defaultTimeoutSeconds
+}
+
+function ConvertTo-WapCommandLineArgument {
+    param([Parameter(Mandatory)][AllowEmptyString()][string] $Argument)
+
+    if ($Argument -notmatch '[\s"]') { return $Argument }
+    return '"' + $Argument.Replace('"', '\"') + '"'
+}
+
+function Invoke-WapWingetInstall {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $WingetPath,
+        [Parameter(Mandatory)][string[]] $Arguments,
+        [Parameter(Mandatory)][string] $PackageId,
+        [Parameter(Mandatory)][string] $Source,
+        [int] $TimeoutSeconds = (Get-WapWingetInstallTimeoutSeconds)
+    )
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $argumentLine = (($Arguments | ForEach-Object { ConvertTo-WapCommandLineArgument $_ }) -join ' ')
+    if ([IO.Path]::GetExtension($WingetPath) -in @('.cmd', '.bat')) {
+        $startInfo.FileName = $env:ComSpec
+        $startInfo.Arguments = "/d /c $((ConvertTo-WapCommandLineArgument $WingetPath)) $argumentLine"
+    }
+    else {
+        $startInfo.FileName = $WingetPath
+        $startInfo.Arguments = $argumentLine
+    }
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $false
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+
+    [void]$process.Start()
+    $started = Get-Date
+    while (-not $process.HasExited) {
+        if (((Get-Date) - $started).TotalSeconds -ge $TimeoutSeconds) {
+            try {
+                $process.Kill()
+            }
+            catch {
+                Write-Warning "Could not stop timed out winget process $($process.Id): $($_.Exception.Message)"
+            }
+            throw "winget timed out installing '$PackageId' from source '$Source' after $TimeoutSeconds seconds."
+        }
+        Start-Sleep -Seconds 2
+        $process.Refresh()
+    }
+
+    $process.Refresh()
+    if ($process.ExitCode -ne 0) {
+        throw "winget failed to install '$PackageId' from source '$Source' (exit $($process.ExitCode))."
+    }
 }
 
 function Install-WapProfile {
@@ -1386,8 +1488,8 @@ function Install-WapProfile {
     foreach ($app in $profile.apps) {
         $packageIndex++
         if (-not $app.enabled) {
-            Write-Host "    [disabled] $($app.id) (source: $($app.source))"
-            Write-WapProfileInstallStatus -ItemType 'package' -State 'disabled' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
+            Write-Host "    [skipped] $($app.id) (source: $($app.source); disabled)"
+            Write-WapProfileInstallStatus -ItemType 'package' -State 'skipped' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
             continue
         }
         Write-Host "    [check] $($app.id) (source: $($app.source))"
@@ -1405,8 +1507,7 @@ function Install-WapProfile {
                 Write-Host "    [install] $($app.id)"
                 Write-WapProfileInstallStatus -ItemType 'package' -State 'installing' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
                 $installArguments = Get-WapWingetInstallArguments -Id $app.id -Source $app.source
-                & $winget.Source @installArguments
-                if ($LASTEXITCODE -ne 0) { throw "winget failed to install '$($app.id)' from source '$($app.source)' (exit $LASTEXITCODE)." }
+                Invoke-WapWingetInstall -WingetPath $winget.Source -Arguments $installArguments -PackageId $app.id -Source $app.source
                 $installedPackages += $app.id
                 Write-Host "    [installed] $($app.id)"
                 Write-WapProfileInstallStatus -ItemType 'package' -State 'installed' -ItemId $app.id -Index $packageIndex -Total $profile.apps.Count
@@ -1425,8 +1526,8 @@ function Install-WapProfile {
     foreach ($capture in $capturePlan) {
         $captureIndex++
         if (-not $capture.enabled) {
-            Write-Host "    [disabled] $($capture.id) selected=$($capture.selectedVersion)"
-            Write-WapProfileInstallStatus -ItemType 'capture' -State 'disabled' -ItemId $capture.id -Index $captureIndex -Total $capturePlan.Count
+            Write-Host "    [skipped] $($capture.id) selected=$($capture.selectedVersion) (disabled)"
+            Write-WapProfileInstallStatus -ItemType 'capture' -State 'skipped' -ItemId $capture.id -Index $captureIndex -Total $capturePlan.Count
             continue
         }
         $replay = if ($capture.replayVersions.Count) { ($capture.replayVersions -join ', ') } else { 'base only' }
@@ -2209,12 +2310,14 @@ function Wait-WapProfileSandboxInstall {
     )
 
     $statusPath = Join-Path $SessionRoot 'output/status.json'
+    $eventsPath = Join-Path $SessionRoot 'output/status-events.jsonl'
     $logPath = Join-Path $SessionRoot 'output/profile-install.log'
     $errorPath = Join-Path $SessionRoot 'output/profile-install-error.txt'
     $started = Get-Date
     $lastReport = -15
     $lastPhase = $null
     $lastDetail = $null
+    $lastEventLineCount = 0
     $processExitedAt = $null
     $reportedProcessExit = $false
     Write-Host "Waiting for Sandbox profile install to finish (timeout: $TimeoutSeconds seconds)..."
@@ -2227,6 +2330,29 @@ function Wait-WapProfileSandboxInstall {
                         Write-Host "  Sandbox profile install phase: $($status.phase)"
                         Write-Host "  Sandbox install log: $logPath"
                         $lastPhase = $status.phase
+                    }
+                    if (Test-Path -LiteralPath $eventsPath -PathType Leaf) {
+                        $eventLines = @(Get-Content -LiteralPath $eventsPath -ErrorAction SilentlyContinue)
+                        if ($eventLines.Count -lt $lastEventLineCount) { $lastEventLineCount = 0 }
+                        for ($eventIndex = $lastEventLineCount; $eventIndex -lt $eventLines.Count; $eventIndex++) {
+                            if ([string]::IsNullOrWhiteSpace($eventLines[$eventIndex])) { continue }
+                            try {
+                                $event = $eventLines[$eventIndex] | ConvertFrom-Json
+                            }
+                            catch {
+                                continue
+                            }
+                            $eventDetail = if ($event.PSObject.Properties['detail']) { [string]$event.detail } else { $null }
+                            if (-not $eventDetail) { continue }
+                            $eventState = if ($event.PSObject.Properties['stepState']) { [string]$event.stepState } else { $null }
+                            $detailPrefix = if ($eventState -eq 'failed') { '  Sandbox profile install failed step:' } else { '  Sandbox profile install step:' }
+                            Write-Host "$detailPrefix $eventDetail"
+                            if ($eventState -eq 'failed' -and $event.error) {
+                                Write-Host "  Failure: $($event.error)"
+                            }
+                            $lastDetail = $eventDetail
+                        }
+                        $lastEventLineCount = $eventLines.Count
                     }
                     if ($status.success -eq $true -and $status.phase -eq 'completed') {
                         Write-Host ''
@@ -2244,7 +2370,7 @@ function Wait-WapProfileSandboxInstall {
                     }
                     $statusDetail = if ($status.PSObject.Properties['detail']) { [string]$status.detail } else { $null }
                     $stepState = if ($status.PSObject.Properties['stepState']) { [string]$status.stepState } else { $null }
-                    if ($statusDetail -and $statusDetail -ne $lastDetail) {
+                    if ($statusDetail -and $statusDetail -ne $lastDetail -and -not (Test-Path -LiteralPath $eventsPath -PathType Leaf)) {
                         $detailPrefix = if ($stepState -eq 'failed') { '  Sandbox profile install failed step:' } else { '  Sandbox profile install step:' }
                         Write-Host "$detailPrefix $statusDetail"
                         if ($stepState -eq 'failed' -and $status.error) {
@@ -2322,6 +2448,7 @@ function New-WapProfileSandboxStartupScript {
 `$sessionRoot = 'C:\WAPProfileSandbox'
 `$output = Join-Path `$sessionRoot 'output'
 `$statusPath = Join-Path `$output 'status.json'
+`$eventsPath = Join-Path `$output 'status-events.jsonl'
 `$errorPath = Join-Path `$output 'profile-install-error.txt'
 `$logPath = Join-Path `$output 'profile-install.log'
 New-Item -ItemType Directory -Path `$output -Force | Out-Null
@@ -2333,14 +2460,33 @@ function Write-InstallStatus {
         [AllowNull()][string] `$ErrorMessage
     )
 
-    [pscustomobject]@{
+    `$json = [pscustomobject]@{
         phase = `$Phase
         success = `$Success
         updatedAt = (Get-Date).ToUniversalTime().ToString('o')
         error = `$ErrorMessage
         log = `$logPath
         errorLog = `$errorPath
-    } | ConvertTo-Json | Set-Content -LiteralPath `$statusPath -Encoding UTF8
+    } | ConvertTo-Json
+    `$tempPath = "`$statusPath.`$PID.`$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        `$json | Set-Content -LiteralPath `$tempPath -Encoding UTF8
+        for (`$attempt = 1; `$attempt -le 5; `$attempt++) {
+            try {
+                Move-Item -LiteralPath `$tempPath -Destination `$statusPath -Force -ErrorAction Stop
+                return
+            }
+            catch {
+                if (`$attempt -eq 5) { throw }
+                Start-Sleep -Milliseconds (100 * `$attempt)
+            }
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath `$tempPath -PathType Leaf) {
+            Remove-Item -LiteralPath `$tempPath -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Write-Host ''
@@ -2450,6 +2596,7 @@ try {
     Write-InstallStatus -Phase 'installingProfile' -Success `$false -ErrorMessage `$null
     Write-Host 'Phase: installing profile inside Sandbox.' -ForegroundColor Cyan
     `$env:WAP_PROFILE_INSTALL_STATUS_PATH = `$statusPath
+    `$env:WAP_PROFILE_INSTALL_EVENTS_PATH = `$eventsPath
     `$env:WAP_PROFILE_INSTALL_LOG_PATH = `$logPath
     `$env:WAP_PROFILE_INSTALL_ERROR_PATH = `$errorPath
     & .\wap.ps1 profile install `$profileName

@@ -985,10 +985,49 @@ Describe 'interactive Windows Sandbox capture' {
         $wingetArgs | Should Not Match 'Disabled\.Tool'
         $output | Should Match 'Packages: 2 declared \(1 enabled\)'
         $output | Should Match '\[install\] Python\.Python\.3\.13'
-        $output | Should Match '\[disabled\] Disabled\.Tool'
+        $output | Should Match '\[skipped\] Disabled\.Tool'
         $output | Should Match 'Attached captures: 1 declared \(0 enabled\)'
-        $output | Should Match '\[disabled\] settings'
+        $output | Should Match '\[skipped\] settings'
         $output.IndexOf('Packages: 2 declared') | Should BeLessThan $output.IndexOf('Attached captures: 1 declared')
+    }
+
+    It 'fails a stuck winget install with a package timeout' {
+        $repo = Join-Path $TestDrive 'profile-winget-timeout'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/dev') -Force | Out-Null
+        @(
+            'name: dev'
+            'apps:'
+            '  - id: Slow.Package'
+            '    source: winget'
+            '    enabled: true'
+        ) | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml')
+
+        $fakeWinget = Join-Path $repo 'winget.cmd'
+        $env:WAP_TEST_FAKE_WINGET = $fakeWinget
+        @(
+            '@echo off'
+            'if "%1"=="list" exit /b 1'
+            'ping -n 6 127.0.0.1 >nul'
+            'exit /b 0'
+        ) | Set-Content -LiteralPath $fakeWinget -Encoding ASCII
+        Mock Get-Command { [pscustomobject]@{ Source = $env:WAP_TEST_FAKE_WINGET } } -ParameterFilter { $Name -eq 'winget' } -ModuleName WindowsAutoProfiles
+
+        $oldTimeout = $env:WAP_WINGET_INSTALL_TIMEOUT_SECONDS
+        $message = $null
+        try {
+            $env:WAP_WINGET_INSTALL_TIMEOUT_SECONDS = '1'
+            Install-WapProfile -Name dev -RepositoryRoot $repo
+        }
+        catch {
+            $message = $_.Exception.Message
+        }
+        finally {
+            $env:WAP_WINGET_INSTALL_TIMEOUT_SECONDS = $oldTimeout
+        }
+
+        $message | Should Match "winget timed out installing 'Slow\.Package'"
     }
 
     It 'launches a sandbox profile install test with mounted scripts and profiles' {
@@ -1016,6 +1055,18 @@ Describe 'interactive Windows Sandbox capture' {
                 updatedAt = (Get-Date).ToUniversalTime().ToString('o')
                 error = $null
             } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputRoot 'status.json') -Encoding UTF8
+            [ordered]@{
+                phase = 'installingProfile'
+                success = $false
+                updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+                stepType = 'package'
+                stepState = 'skipped'
+                item = 'Disabled.Tool'
+                index = 2
+                total = 2
+                detail = 'package 2/2 skipped: Disabled.Tool'
+                error = $null
+            } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $outputRoot 'status-events.jsonl') -Encoding UTF8
             $process = New-Object psobject -Property @{ HasExited = $false }
             $process | Add-Member -MemberType ScriptMethod -Name Refresh -Value {}
             return $process
@@ -1031,6 +1082,7 @@ Describe 'interactive Windows Sandbox capture' {
         $startup | Should Match 'WAP_WINGET_PREREQ_ROOT'
         $startup | Should Match 'profile install'
         $startup | Should Match 'WAP_PROFILE_INSTALL_STATUS_PATH'
+        $startup | Should Match 'WAP_PROFILE_INSTALL_EVENTS_PATH'
         $startup | Should Match 'profile activate <profile>'
         $startup | Should Match 'profile deactivate <profile>'
         $startup | Should Match 'profile uninstall <profile>'
@@ -1047,6 +1099,7 @@ Describe 'interactive Windows Sandbox capture' {
         $wsb | Should Match ([regex]::Escape('<SandboxFolder>C:\WAPProfiles</SandboxFolder>'))
         $wsb | Should Match '-NoExit'
         $output | Should Match 'Sandbox launched'
+        $output | Should Match 'Sandbox profile install step: package 2/2 skipped: Disabled\.Tool'
         $output | Should Match 'SANDBOX PROFILE INSTALL COMPLETE'
         $output | Should Match 'manual profile lifecycle testing'
         $output | Should Match 'C:\\WAPProfileSandbox\\profile-testing\.md'
