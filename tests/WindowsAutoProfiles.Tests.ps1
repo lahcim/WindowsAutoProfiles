@@ -130,6 +130,31 @@ Describe 'state, init, and capture' {
         $config.workspaceRoot | Should Be $customRoot
     }
 
+    It 'uses default settings when optional config keys are missing' {
+        $repo = Join-Path $TestDrive 'minimal-config'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        [ordered]@{
+            version = 1
+            configPath = 'wap.settings.json'
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repo 'wap.config.json') -Encoding UTF8
+        [ordered]@{} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repo 'wap.settings.json') -Encoding UTF8
+
+        $config = Get-WapConfig -RepositoryRoot $repo
+        $shown = Show-WapConfig -RepositoryRoot $repo | Out-String
+
+        $config.version | Should Be 1
+        $config.workspaceRoot | Should Be ([Environment]::ExpandEnvironmentVariables('%USERPROFILE%\Workspaces'))
+        $config.profilesRoot | Should Be (Join-Path $repo 'profiles')
+        $config.loggingEnabled | Should Be $true
+        $config.loggingRetentionDays | Should Be 30
+        $config.logRoot | Should Be (Join-Path $repo '.logs')
+        $config.sandboxInstallWinget | Should Be $true
+        $shown | Should Match 'workspaceRoot\s+:\s+%USERPROFILE%\\Workspaces'
+        $shown | Should Match 'profilesRoot\s+:\s+profiles'
+        $shown | Should Match 'logging\.root\s+:\s+\.logs'
+        $shown | Should Match 'sandbox\.installWinget\s+:\s+True'
+    }
+
     It 'installs prerequisites during init by default and can skip them' {
         $repo = Join-Path $TestDrive 'init-prereqs'
         New-Item -ItemType Directory -Path $repo | Out-Null

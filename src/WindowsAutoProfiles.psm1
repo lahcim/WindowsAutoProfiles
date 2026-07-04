@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 
 $script:WapMinimumPowerShellVersion = [version]'5.1'
 $script:WapVersion = '1.1'
-$script:WapLastUpdated = '2026-07-04T03:58:01Z'
+$script:WapLastUpdated = '2026-07-04T04:03:46Z'
 
 function Assert-WapPowerShellVersion {
     param(
@@ -89,6 +89,45 @@ function New-WapDefaultFullConfig {
     }
 }
 
+function Merge-WapConfigWithDefaults {
+    param([AllowNull()][pscustomobject] $Config)
+
+    $defaults = New-WapDefaultFullConfig
+    if (-not $Config) { return $defaults }
+
+    if (-not $Config.PSObject.Properties['version']) {
+        Add-Member -InputObject $Config -MemberType NoteProperty -Name version -Value $defaults.version
+    }
+    if (-not $Config.PSObject.Properties['workspaceRoot']) {
+        Add-Member -InputObject $Config -MemberType NoteProperty -Name workspaceRoot -Value $defaults.workspaceRoot
+    }
+    if (-not $Config.PSObject.Properties['profilesRoot']) {
+        Add-Member -InputObject $Config -MemberType NoteProperty -Name profilesRoot -Value $defaults.profilesRoot
+    }
+
+    if (-not $Config.PSObject.Properties['logging'] -or -not $Config.logging) {
+        Add-Member -InputObject $Config -MemberType NoteProperty -Name logging -Value ([pscustomobject]@{})
+    }
+    if (-not $Config.logging.PSObject.Properties['enabled']) {
+        Add-Member -InputObject $Config.logging -MemberType NoteProperty -Name enabled -Value $defaults.logging.enabled
+    }
+    if (-not $Config.logging.PSObject.Properties['retentionDays']) {
+        Add-Member -InputObject $Config.logging -MemberType NoteProperty -Name retentionDays -Value $defaults.logging.retentionDays
+    }
+    if (-not $Config.logging.PSObject.Properties['root']) {
+        Add-Member -InputObject $Config.logging -MemberType NoteProperty -Name root -Value $defaults.logging.root
+    }
+
+    if (-not $Config.PSObject.Properties['sandbox'] -or -not $Config.sandbox) {
+        Add-Member -InputObject $Config -MemberType NoteProperty -Name sandbox -Value ([pscustomobject]@{})
+    }
+    if (-not $Config.sandbox.PSObject.Properties['installWinget']) {
+        Add-Member -InputObject $Config.sandbox -MemberType NoteProperty -Name installWinget -Value $defaults.sandbox.installWinget
+    }
+
+    return $Config
+}
+
 function Get-WapConfigPaths {
     param([Parameter(Mandatory)][string] $RepositoryRoot)
 
@@ -165,7 +204,7 @@ function Get-WapRawConfig {
     }
 
     try {
-        return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        return Merge-WapConfigWithDefaults (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
     }
     catch {
         throw "Configuration file '$path' is invalid: $($_.Exception.Message)"
@@ -573,7 +612,7 @@ function Get-WapConfig {
 
     $config = Get-WapRawConfig -RepositoryRoot $RepositoryRoot
 
-    if (-not $config.PSObject.Properties['version'] -or $config.version -ne 1) {
+    if ($config.version -ne 1) {
         throw "Unsupported or missing configuration version. Expected version 1."
     }
     if (-not $config.PSObject.Properties['workspaceRoot'] -or
@@ -625,7 +664,7 @@ function Show-WapConfig {
     param([Parameter(Mandatory)][string] $RepositoryRoot)
 
     $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
-    $raw = Get-Content -LiteralPath $config.source -Raw | ConvertFrom-Json
+    $raw = Merge-WapConfigWithDefaults (Get-Content -LiteralPath $config.source -Raw | ConvertFrom-Json)
     $bootstrap = Get-Content -LiteralPath $config.bootstrap -Raw | ConvertFrom-Json
     $localBootstrap = Get-Content -LiteralPath $config.localBootstrap -Raw | ConvertFrom-Json
     $rawBootstrapConfigPath = if ($localBootstrap.PSObject.Properties['bootstrapConfigPath']) { [string]$localBootstrap.bootstrapConfigPath } else { '<local wap.config.json>' }
@@ -2988,7 +3027,7 @@ function Show-WapHelp {
     @'
 WindowsAutoProfiles
 Version: 1.1
-Last updated: 2026-07-04T03:58:01Z
+Last updated: 2026-07-04T04:03:46Z
 Author: Michal Zygmunt <lahcim@fajne.com>
 Minimum PowerShell: 5.1
 

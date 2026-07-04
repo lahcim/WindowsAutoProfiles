@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T03:58:01Z
+Last updated: 2026-07-04T04:03:46Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -48,6 +48,9 @@ and stores that redirect.
 ```
 
 ## Options
+
+Settings are optional unless noted otherwise. When a setting is missing from the
+JSON config file, WAP uses the default value below at runtime.
 
 | Key | Type | Default | Description |
 |---|---|---:|---|
