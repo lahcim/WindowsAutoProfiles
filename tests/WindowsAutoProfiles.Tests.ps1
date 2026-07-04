@@ -187,6 +187,23 @@ Describe 'state, init, and capture' {
         Remove-Variable -Name wingetChecks -Scope Global -ErrorAction SilentlyContinue
     }
 
+    It 'suggests force when downloading over an existing profile definition' {
+        $repo = Join-Path $TestDrive 'profile-download-exists'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles\bench') -Force | Out-Null
+        @('name: bench', 'apps:') | Set-Content -LiteralPath (Join-Path $repo 'profiles\bench\profile.yaml')
+
+        $message = $null
+        try {
+            Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics') -RepositoryRoot $repo
+        }
+        catch { $message = $_.Exception.Message }
+
+        $message | Should Match 'already exists'
+        $message | Should Match '--force'
+    }
+
     It 'quick installs a GitHub profile URL and initializes first when needed' {
         $repo = Join-Path $TestDrive 'quick-install'
         New-Item -ItemType Directory -Path $repo | Out-Null
@@ -272,7 +289,7 @@ Describe 'state, init, and capture' {
                 'apps:'
             ) | Set-Content -LiteralPath (Join-Path $target 'profile.yaml') -Encoding UTF8
             return $target
-        } -ModuleName WindowsAutoProfiles
+        } -ModuleName WindowsAutoProfiles -Scope It
 
         Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics') -RepositoryRoot $repo
 
@@ -297,29 +314,12 @@ Describe 'state, init, and capture' {
             param($Reference, [string] $ProfilesRoot, [string] $TargetName, [switch] $Force)
             $global:downloadForce = [bool]$Force
             return (Join-Path $ProfilesRoot $TargetName)
-        } -ModuleName WindowsAutoProfiles
+        } -ModuleName WindowsAutoProfiles -Scope It
 
         Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics', '--force') -RepositoryRoot $repo
 
         $global:downloadForce | Should Be $true
         Remove-Variable -Name downloadForce -Scope Global -ErrorAction SilentlyContinue
-    }
-
-    It 'suggests force when downloading over an existing profile definition' {
-        $repo = Join-Path $TestDrive 'profile-download-exists'
-        New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
-        New-Item -ItemType Directory -Path (Join-Path $repo 'profiles\bench') -Force | Out-Null
-        @('name: bench', 'apps:') | Set-Content -LiteralPath (Join-Path $repo 'profiles\bench\profile.yaml')
-
-        $message = $null
-        try {
-            Invoke-WapCli -Command profile -Arguments @('download', 'bench', 'https://github.com/lahcim/WindowsAutoProfiles/tree/main/profiles/electronics') -RepositoryRoot $repo
-        }
-        catch { $message = $_.Exception.Message }
-
-        $message | Should Match 'already exists'
-        $message | Should Match '--force'
     }
 
     It 'previews remote profile download without downloading' {
