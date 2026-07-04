@@ -6,7 +6,7 @@ delete anything, or generate MSIX packages.
 
 Version: 1.1
 
-Last updated: 2026-07-04T02:47:33Z
+Last updated: 2026-07-04T03:58:01Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -25,6 +25,23 @@ Start a standalone session on the host:
 .\wap.ps1 capture start example
 ```
 
+By default, WAP installs winget inside the Windows Sandbox before baseline
+capture starts. That startup step uses the Microsoft.WinGet.Client
+`Repair-WinGetPackageManager -AllUsers` path and runs before
+`Capture-Baseline.ps1`, so the baseline does not accidentally capture winget
+installation changes. Use `--no-winget` to skip winget setup for a single
+capture:
+
+```powershell
+.\wap.ps1 capture start example --no-winget
+```
+
+The global default is controlled by:
+
+```powershell
+.\wap.ps1 config set sandbox.installWinget true
+```
+
 This creates `.capture/example/` under the repository root. That folder is the
 raw capture workspace you can later list, rename, attach to profiles, or delete.
 It contains:
@@ -36,13 +53,15 @@ output/
 sandbox.wsb
 session.json
 Capture-Common.ps1
+Capture-Startup.ps1
 Capture-Baseline.ps1
 Capture-Finalize.ps1
 ```
 
 The generated `sandbox.wsb` maps only `.capture/example` to
 `C:\WAPCapture` with read/write enabled. Its startup command runs
-`C:\WAPCapture\Capture-Baseline.ps1`.
+`C:\WAPCapture\Capture-Startup.ps1`, which optionally bootstraps winget before
+running `C:\WAPCapture\Capture-Baseline.ps1`.
 
 The baseline records filesystem metadata under Program Files, Program Files
 (x86), ProgramData, AppData Roaming, AppData Local, and both user/common Start

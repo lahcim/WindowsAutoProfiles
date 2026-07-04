@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 
 $script:WapMinimumPowerShellVersion = [version]'5.1'
 $script:WapVersion = '1.1'
-$script:WapLastUpdated = '2026-07-04T03:24:14Z'
+$script:WapLastUpdated = '2026-07-04T03:58:01Z'
 
 function Assert-WapPowerShellVersion {
     param(
@@ -82,6 +82,9 @@ function New-WapDefaultFullConfig {
             enabled = $true
             retentionDays = 30
             root = '.logs'
+        }
+        sandbox = [pscustomobject]@{
+            installWinget = $true
         }
     }
 }
@@ -328,6 +331,76 @@ function Test-WapAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Test-WapWingetAvailable {
+    return $null -ne (Get-Command winget -ErrorAction SilentlyContinue)
+}
+
+function Install-WapWingetPrerequisite {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    Write-Host 'Checking prerequisite: winget'
+    if (Test-WapWingetAvailable) {
+        Write-Host '  [ok] winget is already available.'
+        return
+    }
+
+    Write-Host '  [missing] winget was not found.'
+    if ($WhatIfPreference) {
+        if ($PSCmdlet.ShouldProcess('winget', 'Install Windows Package Manager prerequisite')) { }
+        Write-Host '  [whatif] winget would be installed if this command was run without -WhatIf.'
+        return
+    }
+
+    Write-Host '  [install] Trying to register Microsoft App Installer for the current user...'
+    if ($PSCmdlet.ShouldProcess('Microsoft.DesktopAppInstaller_8wekyb3d8bbwe', 'Register App Installer package')) {
+        try {
+            Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "App Installer registration did not complete: $($_.Exception.Message)"
+        }
+    }
+
+    if (Test-WapWingetAvailable) {
+        Write-Host '  [ok] winget is now available.'
+        return
+    }
+
+    Write-Host '  [install] Trying Microsoft.WinGet.Client Repair-WinGetPackageManager fallback...'
+    if ($PSCmdlet.ShouldProcess('winget', 'Install Windows Package Manager via Microsoft.WinGet.Client')) {
+        try {
+            Install-PackageProvider -Name NuGet -Force -ErrorAction Stop | Out-Null
+            Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery -Scope CurrentUser -AllowClobber -ErrorAction Stop | Out-Null
+            Import-Module Microsoft.WinGet.Client -Force -ErrorAction Stop
+            if (Test-WapAdministrator) {
+                Repair-WinGetPackageManager -AllUsers -ErrorAction Stop
+            }
+            else {
+                Repair-WinGetPackageManager -ErrorAction Stop
+            }
+        }
+        catch {
+            throw "winget was not found and automatic installation failed. Install App Installer from https://apps.microsoft.com/detail/9nblggh4nns1 or rerun '.\wap.ps1 init' from an elevated PowerShell session. Details: $($_.Exception.Message)"
+        }
+    }
+
+    if (-not (Test-WapWingetAvailable)) {
+        throw "winget installation completed, but winget is still not available on PATH. Open a new terminal and run '.\wap.ps1 init' again, or install App Installer from https://apps.microsoft.com/detail/9nblggh4nns1."
+    }
+
+    Write-Host '  [ok] winget is now available.'
+}
+
+function Install-WapPrerequisites {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    Write-Host 'Installing WindowsAutoProfiles prerequisites...'
+    Install-WapWingetPrerequisite -WhatIf:$WhatIfPreference
+    Write-Host 'Done: prerequisites are installed.'
+}
+
 function ConvertTo-WapCommandLine {
     param([AllowEmptyCollection()][string[]] $Arguments)
 
@@ -524,6 +597,15 @@ function Get-WapConfig {
     $profilesRoot = Resolve-WapConfigPathValue -Value $profilesRootValue -BasePath $configDirectory -Name 'profilesRoot'
 
     $logConfig = Get-WapLogConfig -RepositoryRoot $RepositoryRoot
+    $sandboxInstallWinget = $true
+    if ($config.PSObject.Properties['sandbox'] -and $config.sandbox -and $config.sandbox.PSObject.Properties['installWinget']) {
+        if ($config.sandbox.installWinget -is [bool]) {
+            $sandboxInstallWinget = [bool]$config.sandbox.installWinget
+        }
+        else {
+            $sandboxInstallWinget = ConvertFrom-WapConfigBoolean -Name 'sandbox.installWinget' -Value ([string]$config.sandbox.installWinget)
+        }
+    }
     [pscustomobject]@{
         version = 1
         workspaceRoot = ([IO.Path]::GetFullPath($workspaceRoot)).TrimEnd([char[]]@('\', '/'))
@@ -531,6 +613,7 @@ function Get-WapConfig {
         loggingEnabled = $logConfig.enabled
         loggingRetentionDays = $logConfig.retentionDays
         logRoot = $logConfig.root
+        sandboxInstallWinget = $sandboxInstallWinget
         source = $paths.fullConfigPath
         bootstrap = $paths.bootstrapPath
         localBootstrap = $paths.localBootstrapPath
@@ -549,6 +632,7 @@ function Show-WapConfig {
     $rawProfilesRoot = if ($raw.PSObject.Properties['profilesRoot']) { [string]$raw.profilesRoot } else { 'profiles' }
     $rawConfigPath = if ($bootstrap.PSObject.Properties['configPath']) { [string]$bootstrap.configPath } else { '<inline>' }
     $rawLoggingRoot = if ($raw.PSObject.Properties['logging'] -and $raw.logging -and $raw.logging.PSObject.Properties['root']) { [string]$raw.logging.root } else { '.logs' }
+    $rawSandboxInstallWinget = if ($raw.PSObject.Properties['sandbox'] -and $raw.sandbox -and $raw.sandbox.PSObject.Properties['installWinget']) { $raw.sandbox.installWinget } else { $true }
 
     Write-Output 'Configurable settings (use ".\wap.ps1 config set <key> <value>" on these keys only):'
     [pscustomobject]@{
@@ -560,6 +644,7 @@ function Show-WapConfig {
         'logging.enabled' = $config.loggingEnabled
         'logging.retentionDays' = $config.loggingRetentionDays
         'logging.root' = $rawLoggingRoot
+        'sandbox.installWinget' = $rawSandboxInstallWinget
     } | Format-List
     Write-Output ''
     Write-Output 'Dynamic resolved settings (read-only; computed at runtime from the configurable settings above):'
@@ -597,6 +682,14 @@ function Set-WapConfig {
     }
     if (-not $raw.logging.PSObject.Properties['retentionDays']) {
         Add-Member -InputObject $raw.logging -MemberType NoteProperty -Name retentionDays -Value 30
+    }
+    if (-not $raw.PSObject.Properties['sandbox'] -or -not $raw.sandbox) {
+        Add-Member -InputObject $raw -MemberType NoteProperty -Name sandbox -Value ([pscustomobject]@{
+            installWinget = $true
+        })
+    }
+    if (-not $raw.sandbox.PSObject.Properties['installWinget']) {
+        Add-Member -InputObject $raw.sandbox -MemberType NoteProperty -Name installWinget -Value $true
     }
 
     switch ($Key) {
@@ -735,6 +828,9 @@ function Set-WapConfig {
                 $raw.logging.root = $storedValue
             }
         }
+        'sandbox.installWinget' {
+            $raw.sandbox.installWinget = ConvertFrom-WapConfigBoolean -Name $Key -Value $storedValue
+        }
         { $_ -in @('ResolvedConfigPath', 'ResolvedWorkspaceRoot', 'ResolvedProfilesRoot', 'ResolvedBootstrapConfigPath', 'LocalBootstrapConfigPath', 'ResolvedLoggingRoot', 'resolved.configPath', 'resolved.workspaceRoot', 'resolved.profilesRoot', 'resolved.bootstrapConfigPath', 'local.bootstrapConfigPath', 'resolved.logging.root') } {
             $targetKey = switch ($Key) {
                 'ResolvedConfigPath' { 'configPath' }
@@ -758,7 +854,7 @@ function Set-WapConfig {
             throw "Unknown configuration key '$Key'. Use 'logging.root' instead."
         }
         default {
-            throw "Unknown configuration key '$Key'. Supported keys: bootstrapConfigPath, configPath, workspaceRoot, profilesRoot, logging.enabled, logging.retentionDays, logging.root."
+            throw "Unknown configuration key '$Key'. Supported keys: bootstrapConfigPath, configPath, workspaceRoot, profilesRoot, logging.enabled, logging.retentionDays, logging.root, sandbox.installWinget."
         }
     }
 
@@ -1755,9 +1851,12 @@ function Start-WapInteractiveCapture {
     param(
         [Parameter(Mandatory)][string] $Name,
         [Parameter(Mandatory)][string] $RepositoryRoot,
-        [int] $BaselineTimeoutSeconds = 900
+        [int] $BaselineTimeoutSeconds = 900,
+        [switch] $NoWinget
     )
 
+    $config = Get-WapConfig -RepositoryRoot $RepositoryRoot
+    $installWingetInSandbox = $config.sandboxInstallWinget -and -not $NoWinget
     $captureRoot = Get-WapCaptureSessionPath -Name $Name -RepositoryRoot $RepositoryRoot
     if (Test-Path -LiteralPath $captureRoot) {
         throw "Capture session '$Name' already exists at '$captureRoot'. No files were overwritten."
@@ -1766,6 +1865,7 @@ function Start-WapInteractiveCapture {
     $templateRoot = Join-Path $RepositoryRoot 'templates/capture'
     $requiredTemplates = @(
         'Capture-Common.ps1',
+        'Capture-Startup.ps1',
         'Capture-Baseline.ps1',
         'Capture-Finalize.ps1',
         'capture-filters.json',
@@ -1779,6 +1879,12 @@ function Start-WapInteractiveCapture {
 
     Write-Host "Starting interactive capture for profile '$Name'..."
     Write-Host "  Host capture root: $captureRoot"
+    if ($installWingetInSandbox) {
+        Write-Host '  Sandbox winget bootstrap: enabled'
+    }
+    else {
+        Write-Host '  Sandbox winget bootstrap: disabled'
+    }
     if ($PSCmdlet.ShouldProcess($captureRoot, 'Create capture session and launch Windows Sandbox')) {
         foreach ($directory in @('baseline', 'after', 'output')) {
             New-Item -ItemType Directory -Path (Join-Path $captureRoot $directory) -Force | Out-Null
@@ -1788,11 +1894,19 @@ function Start-WapInteractiveCapture {
             Copy-Item -LiteralPath (Join-Path $templateRoot $scriptName) -Destination (Join-Path $captureRoot $scriptName)
             Write-Host "  [generated] $scriptName"
         }
+        $startupScript = Get-Content -LiteralPath (Join-Path $templateRoot 'Capture-Startup.ps1') -Raw
+        $wingetFlag = if ($installWingetInSandbox) { '$true' } else { '$false' }
+        $startupScript.Replace('__INSTALL_WINGET_IN_SANDBOX__', $wingetFlag) |
+            Set-Content -LiteralPath (Join-Path $captureRoot 'Capture-Startup.ps1') -Encoding utf8
+        Write-Host '  [generated] Capture-Startup.ps1'
 
         [ordered]@{
             version = 1
             profileName = $Name
             createdAt = (Get-Date).ToUniversalTime().ToString('o')
+            sandbox = [ordered]@{
+                installWinget = $installWingetInSandbox
+            }
         } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $captureRoot 'session.json') -Encoding utf8
 
         $escapedHostPath = [Security.SecurityElement]::Escape($captureRoot)
@@ -2827,7 +2941,11 @@ function New-WapCapture {
 }
 
 function Initialize-Wap {
-    param([Parameter(Mandatory)][string] $RepositoryRoot)
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string] $RepositoryRoot,
+        [switch] $SkipPrereqs
+    )
 
     foreach ($directory in @('profiles', 'docs')) {
         New-Item -ItemType Directory -Path (Join-Path $RepositoryRoot $directory) -Force | Out-Null
@@ -2850,6 +2968,9 @@ function Initialize-Wap {
                 retentionDays = 30
                 root = '.logs'
             }
+            sandbox = [ordered]@{
+                installWinget = $true
+            }
         } | ConvertTo-Json | Set-Content -LiteralPath $fullConfigPath -Encoding utf8
     }
 
@@ -2858,20 +2979,23 @@ function Initialize-Wap {
         Save-WapState (New-WapState) $RepositoryRoot
     }
     Write-Host "WindowsAutoProfiles initialized at '$RepositoryRoot'."
+    if (-not $SkipPrereqs) {
+        Install-WapPrerequisites -WhatIf:$WhatIfPreference
+    }
 }
 
 function Show-WapHelp {
     @'
 WindowsAutoProfiles
 Version: 1.1
-Last updated: 2026-07-04T03:24:14Z
+Last updated: 2026-07-04T03:58:01Z
 Author: Michal Zygmunt <lahcim@fajne.com>
 Minimum PowerShell: 5.1
 
 Usage:
   .\wap.ps1 --help
   .\wap.ps1 --examples
-  .\wap.ps1 init
+  .\wap.ps1 init [--skip-prereqs] [-WhatIf]
   .\wap.ps1 config show
   .\wap.ps1 config set bootstrapConfigPath <path> [-WhatIf]
   .\wap.ps1 config set configPath <path> [-WhatIf]
@@ -2880,6 +3004,7 @@ Usage:
   .\wap.ps1 config set logging.enabled <true|false> [-WhatIf]
   .\wap.ps1 config set logging.retentionDays <days> [-WhatIf]
   .\wap.ps1 config set logging.root <path> [-WhatIf]
+  .\wap.ps1 config set sandbox.installWinget <true|false> [-WhatIf]
   .\wap.ps1 logs cleanup [-WhatIf]
   .\wap.ps1 profile install <name> [-WhatIf]
   .\wap.ps1 profile uninstall <name> [--remove-user-data] [--remove-registry] [-WhatIf]
@@ -2900,7 +3025,7 @@ Usage:
   .\wap.ps1 profile capture select-version <profile> <captureId> <base|latest|version>
   .\wap.ps1 profile capture merge <profile> <captureId> [--up-to <version>]
   .\wap.ps1 capture new <name>
-  .\wap.ps1 capture start <name> [-WhatIf]
+  .\wap.ps1 capture start <name> [--no-winget] [-WhatIf]
   .\wap.ps1 capture list
   .\wap.ps1 capture rename <name> <newName> [-WhatIf]
   .\wap.ps1 capture validate <name>
@@ -2980,7 +3105,17 @@ function Invoke-WapCli {
     Assert-WapPowerShellVersion -CommandName $commandName
 
     switch ($Command) {
-        'init' { Initialize-Wap $RepositoryRoot; return }
+        'init' {
+            $unknownInitArguments = @($argsList | Where-Object { $_ -ne '--skip-prereqs' })
+            if ($unknownInitArguments.Count -gt 0) {
+                throw (New-WapUnknownCommandMessage -CommandLine '.\wap.ps1 init' -UnknownToken $unknownInitArguments[0] -Completions @(
+                    '.\wap.ps1 init',
+                    '.\wap.ps1 init --skip-prereqs'
+                ))
+            }
+            Initialize-Wap -RepositoryRoot $RepositoryRoot -SkipPrereqs:($argsList -contains '--skip-prereqs') -WhatIf:$whatIf
+            return
+        }
         'config' {
             $configCompletions = @(
                 '.\wap.ps1 config show',
@@ -2990,7 +3125,8 @@ function Invoke-WapCli {
                 '.\wap.ps1 config set profilesRoot <path>',
                 '.\wap.ps1 config set logging.enabled <true|false>',
                 '.\wap.ps1 config set logging.retentionDays <days>',
-                '.\wap.ps1 config set logging.root <path>'
+                '.\wap.ps1 config set logging.root <path>',
+                '.\wap.ps1 config set sandbox.installWinget <true|false>'
             )
             if (Test-WapCliMissingToken -Arguments $argsList) {
                 throw (New-WapIncompleteCommandMessage -CommandLine '.\wap.ps1 config' -Completions $configCompletions)
@@ -3009,7 +3145,8 @@ function Invoke-WapCli {
                             '.\wap.ps1 config set profilesRoot <path>',
                             '.\wap.ps1 config set logging.enabled <true|false>',
                             '.\wap.ps1 config set logging.retentionDays <days>',
-                            '.\wap.ps1 config set logging.root <path>'
+                            '.\wap.ps1 config set logging.root <path>',
+                            '.\wap.ps1 config set sandbox.installWinget <true|false>'
                         ))
                     }
                     $value = @($argsList[2..($argsList.Count - 1)]) -join ' '
@@ -3188,7 +3325,7 @@ function Invoke-WapCli {
             $captureCompletions = @(
                 '.\wap.ps1 capture list',
                 '.\wap.ps1 capture new <name>',
-                '.\wap.ps1 capture start <name>',
+                '.\wap.ps1 capture start <name> [--no-winget]',
                 '.\wap.ps1 capture rename <name> <newName>',
                 '.\wap.ps1 capture validate <name>',
                 '.\wap.ps1 capture diff <name>',
@@ -3213,8 +3350,10 @@ function Invoke-WapCli {
                     New-WapCapture $argsList[1] $RepositoryRoot
                 }
                 'start' {
-                    if ($argsList.Count -ne 2) { throw 'Usage: .\wap.ps1 capture start <name> [-WhatIf]' }
-                    Start-WapInteractiveCapture $argsList[1] $RepositoryRoot -WhatIf:$whatIf
+                    $noWinget = $argsList -contains '--no-winget'
+                    $captureStartArgs = @($argsList | Where-Object { $_ -ne '--no-winget' })
+                    if ($captureStartArgs.Count -ne 2) { throw 'Usage: .\wap.ps1 capture start <name> [--no-winget] [-WhatIf]' }
+                    Start-WapInteractiveCapture $captureStartArgs[1] $RepositoryRoot -NoWinget:$noWinget -WhatIf:$whatIf
                 }
                 'validate' {
                     if ($argsList.Count -ne 2) { throw 'Usage: .\wap.ps1 capture validate <name>' }
@@ -3269,5 +3408,7 @@ Export-ModuleMember -Function @(
     'Invoke-WapCaptureFilterApplication',
     'New-WapCapture',
     'Initialize-Wap',
+    'Install-WapPrerequisites',
+    'Install-WapWingetPrerequisite',
     'Invoke-WapCli'
 )

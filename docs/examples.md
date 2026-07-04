@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T03:24:14Z
+Last updated: 2026-07-04T03:58:01Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -22,6 +22,13 @@ This file is printed by:
 
    ```powershell
    .\wap.ps1 init
+   ```
+
+   `init` also installs prerequisites such as winget when missing. To skip
+   prerequisite installation:
+
+   ```powershell
+   .\wap.ps1 init --skip-prereqs
    ```
 
    Example output:
@@ -193,6 +200,7 @@ This file is printed by:
    ```text
    Creating capture session 'kicad'...
      Capture root: C:\src\WindowsAutoProfiles\.capture\kicad
+     Sandbox winget bootstrap: enabled
      Sandbox: C:\src\WindowsAutoProfiles\.capture\kicad\WindowsAutoProfiles.wsb
    Launching Windows Sandbox...
    ```

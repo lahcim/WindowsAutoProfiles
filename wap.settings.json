@@ -6,5 +6,8 @@
     "enabled": true,
     "retentionDays": 30,
     "root": ".logs"
+  },
+  "sandbox": {
+    "installWinget": true
   }
 }

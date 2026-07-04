@@ -5,7 +5,7 @@ and expected command output.
 
 Version: 1.1
 
-Last updated: 2026-07-04T03:24:14Z
+Last updated: 2026-07-04T03:58:01Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -21,7 +21,7 @@ Minimum PowerShell for all commands is **5.1**. The CLI validates this before
 dispatching each command.
 
 ```text
-.\wap.ps1 init
+.\wap.ps1 init [--skip-prereqs] [-WhatIf]
 .\wap.ps1 --help
 .\wap.ps1 --examples
 .\wap.ps1 config show
@@ -32,6 +32,7 @@ dispatching each command.
 .\wap.ps1 config set logging.enabled <true|false> [-WhatIf]
 .\wap.ps1 config set logging.retentionDays <days> [-WhatIf]
 .\wap.ps1 config set logging.root <path> [-WhatIf]
+.\wap.ps1 config set sandbox.installWinget <true|false> [-WhatIf]
 .\wap.ps1 logs cleanup [-WhatIf]
 
 .\wap.ps1 profile install <name> [-WhatIf]
@@ -55,7 +56,7 @@ dispatching each command.
 .\wap.ps1 profile capture merge <profile> <captureId> [--up-to <version>]
 
 .\wap.ps1 capture new <name>
-.\wap.ps1 capture start <name> [-WhatIf]
+.\wap.ps1 capture start <name> [--no-winget] [-WhatIf]
 .\wap.ps1 capture list
 .\wap.ps1 capture rename <name> <newName> [-WhatIf]
 .\wap.ps1 capture validate <name>
@@ -165,6 +166,16 @@ WindowsAutoProfiles initialized at 'C:\src\WindowsAutoProfiles'.
 existing configuration. It also creates `wap.settings.json` when that file is
 absent.
 
+`init` installs prerequisites by default. Skip prerequisite installation:
+
+```powershell
+.\wap.ps1 init --skip-prereqs
+```
+
+The first prerequisite is winget. If winget is missing, WAP first tries to
+register Microsoft App Installer for the current user. If that does not make
+winget available, WAP uses the official Microsoft.WinGet.Client repair path.
+
 ### Show configuration
 
 ```powershell
@@ -184,6 +195,7 @@ profilesRoot          : profiles
 logging.enabled       : True
 logging.retentionDays : 30
 logging.root          : .logs
+sandbox.installWinget : True
 
 Dynamic resolved settings (read-only; computed at runtime from the configurable settings above):
 
@@ -546,15 +558,26 @@ removed.
 .\wap.ps1 capture start kicad
 ```
 
+By default, `capture start` installs winget inside the Windows Sandbox before
+baseline capture starts. This keeps winget setup out of the captured application
+diff while making winget available for interactive installer work. Skip this for
+one capture with:
+
+```powershell
+.\wap.ps1 capture start kicad --no-winget
+```
+
 Example output:
 
 ```text
 Starting interactive capture for profile 'kicad'...
   Host capture root: C:\src\WindowsAutoProfiles\.capture\kicad
+  Sandbox winget bootstrap: enabled
   [created] baseline/
   [created] after/
   [created] output/
   [generated] Capture-Common.ps1
+  [generated] Capture-Startup.ps1
   [generated] Capture-Baseline.ps1
   [generated] Capture-Finalize.ps1
   [generated] capture-filters.json

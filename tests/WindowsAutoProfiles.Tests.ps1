@@ -116,12 +116,12 @@ Describe 'state, init, and capture' {
     It 'initializes config and state idempotently without overwriting config' {
         $repo = Join-Path $TestDrive 'init'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         (Join-Path $repo 'wap.config.json') | Should Exist
         (Join-Path $repo 'wap.settings.json') | Should Exist
         $customRoot = Join-Path $TestDrive 'custom-workspaces'
         Write-TestConfig -RepositoryRoot $repo -WorkspaceRoot $customRoot
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         $state = Get-WapState -RepositoryRoot $repo
         $config = Get-WapConfig -RepositoryRoot $repo
         $state.version | Should Be 1
@@ -130,13 +130,40 @@ Describe 'state, init, and capture' {
         $config.workspaceRoot | Should Be $customRoot
     }
 
+    It 'installs prerequisites during init by default and can skip them' {
+        $repo = Join-Path $TestDrive 'init-prereqs'
+        New-Item -ItemType Directory -Path $repo | Out-Null
+        $global:wingetChecks = 0
+        Mock Test-WapWingetAvailable {
+            $global:wingetChecks++
+            return ($global:wingetChecks -ge 2)
+        } -ModuleName WindowsAutoProfiles
+        Mock Add-AppxPackage {} -ModuleName WindowsAutoProfiles
+        Mock Install-PackageProvider {} -ModuleName WindowsAutoProfiles
+        Mock Install-Module {} -ModuleName WindowsAutoProfiles
+        Mock Import-Module {} -ModuleName WindowsAutoProfiles
+
+        Invoke-WapCli -Command init -Arguments @() -RepositoryRoot $repo
+
+        (Join-Path $repo 'wap.config.json') | Should Exist
+        Assert-MockCalled Add-AppxPackage 1 -ModuleName WindowsAutoProfiles
+        Assert-MockCalled Install-Module 0 -ModuleName WindowsAutoProfiles
+
+        $skipRepo = Join-Path $TestDrive 'init-skip-prereqs'
+        New-Item -ItemType Directory -Path $skipRepo | Out-Null
+        Invoke-WapCli -Command init -Arguments @('--skip-prereqs') -RepositoryRoot $skipRepo
+        (Join-Path $skipRepo 'wap.config.json') | Should Exist
+        Assert-MockCalled Add-AppxPackage 1 -ModuleName WindowsAutoProfiles
+        Remove-Variable -Name wingetChecks -Scope Global -ErrorAction SilentlyContinue
+    }
+
     It 'supports an external full config and external profilesRoot with runtime environment expansion' {
         $repo = Join-Path $TestDrive 'external-config'
         $configDirectory = Join-Path $TestDrive 'external-config-store'
         $workspace = Join-Path $TestDrive 'external-workspaces'
         $profiles = Join-Path $TestDrive 'external-profiles'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         [Environment]::SetEnvironmentVariable('WAP_TEST_CONFIG_DIR', $configDirectory, 'Process')
         [Environment]::SetEnvironmentVariable('WAP_TEST_WORKSPACES', $workspace, 'Process')
         [Environment]::SetEnvironmentVariable('WAP_TEST_PROFILES', $profiles, 'Process')
@@ -176,7 +203,7 @@ Describe 'state, init, and capture' {
         $settingsDirectory = Join-Path $TestDrive 'settings-store'
         $logsDirectory = Join-Path $TestDrive 'custom-logs'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         [Environment]::SetEnvironmentVariable('WAP_TEST_BOOTSTRAP_DIR', $bootstrapDirectory, 'Process')
         [Environment]::SetEnvironmentVariable('WAP_TEST_SETTINGS_DIR', $settingsDirectory, 'Process')
         [Environment]::SetEnvironmentVariable('WAP_TEST_LOGS_DIR', $logsDirectory, 'Process')
@@ -218,7 +245,7 @@ Describe 'state, init, and capture' {
     It 'shows and sets workspaceRoot through the CLI' {
         $repo = Join-Path $TestDrive 'config-cli'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         $newRoot = Join-Path $TestDrive 'configured-workspaces'
 
         Invoke-WapCli -Command config -Arguments @('set', 'workspaceRoot', $newRoot) -RepositoryRoot $repo
@@ -235,7 +262,7 @@ Describe 'state, init, and capture' {
     It 'rejects attempts to set dynamic resolved configuration values with guidance' {
         $repo = Join-Path $TestDrive 'resolved-config-key'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
 
         $message = $null
         try {
@@ -250,7 +277,7 @@ Describe 'state, init, and capture' {
     It 'shows and sets logging configuration through the CLI' {
         $repo = Join-Path $TestDrive 'logging-config-cli'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
 
         Invoke-WapCli -Command config -Arguments @('set', 'logging.enabled', 'false') -RepositoryRoot $repo
         Invoke-WapCli -Command config -Arguments @('set', 'logging.retentionDays', '0') -RepositoryRoot $repo
@@ -266,7 +293,7 @@ Describe 'state, init, and capture' {
     It 'cleans generated logs while keeping the current command log' {
         $repo = Join-Path $TestDrive 'logs-cleanup'
         New-Item -ItemType Directory -Path (Join-Path $repo '.logs') -Force | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         $oldLog = Join-Path $repo '.logs/old.log'
         $currentLog = Join-Path $repo '.logs/current.log'
         'old' | Set-Content -LiteralPath $oldLog
@@ -287,7 +314,7 @@ Describe 'state, init, and capture' {
     It 'rejects a relative workspaceRoot from the CLI' {
         $repo = Join-Path $TestDrive 'invalid-config-cli'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         $message = $null
         try {
             Invoke-WapCli -Command config -Arguments @('set', 'workspaceRoot', 'relative\path') -RepositoryRoot $repo
@@ -298,7 +325,7 @@ Describe 'state, init, and capture' {
     It 'creates a portable capture without requiring winget' {
         $repo = Join-Path $TestDrive 'capture'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         Mock Get-Command { $null } -ParameterFilter { $Name -eq 'winget' } -ModuleName WindowsAutoProfiles
         New-WapCapture -Name fresh -RepositoryRoot $repo
         $path = Join-Path $repo 'profiles/fresh/profile.yaml'
@@ -313,7 +340,7 @@ Describe 'state, init, and capture' {
         $repo = Join-Path $TestDrive 'profile-new'
         $profiles = Join-Path $TestDrive 'profile-new-definitions'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         Invoke-WapCli -Command config -Arguments @('set', 'profilesRoot', $profiles) -RepositoryRoot $repo
 
         Invoke-WapCli -Command profile -Arguments @('new', 'developer') -RepositoryRoot $repo
@@ -339,7 +366,7 @@ Describe 'profile status' {
         $repo = Join-Path $TestDrive 'status'
         $workspace = Join-Path $TestDrive 'status-workspaces'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         Write-TestConfig -RepositoryRoot $repo -WorkspaceRoot $workspace
         foreach ($name in @('available', 'inactive', 'active')) {
             $profileDirectory = Join-Path $repo "profiles/$name"
@@ -401,11 +428,12 @@ Describe 'interactive Windows Sandbox capture' {
             return $process
         } -ModuleName WindowsAutoProfiles
 
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         $output = (Start-WapInteractiveCapture -Name demo -RepositoryRoot $repo *>&1 | Out-String)
 
         $captureRoot = Join-Path $repo '.capture/demo'
         foreach ($item in @(
-            'baseline', 'after', 'output', 'sandbox.wsb', 'Capture-Baseline.ps1',
+            'baseline', 'after', 'output', 'sandbox.wsb', 'Capture-Startup.ps1', 'Capture-Baseline.ps1',
             'Capture-Finalize.ps1', 'Capture-Common.ps1', 'capture-filters.json', 'session.json'
         )) {
             (Join-Path $captureRoot $item) | Should Exist
@@ -414,7 +442,9 @@ Describe 'interactive Windows Sandbox capture' {
         $wsb | Should Match ([regex]::Escape($captureRoot))
         $wsb | Should Match ([regex]::Escape('<SandboxFolder>C:\WAPCapture</SandboxFolder>'))
         $wsb | Should Match ([regex]::Escape('<ReadOnly>false</ReadOnly>'))
-        $wsb | Should Match 'Capture-Baseline.ps1'
+        $wsb | Should Match 'Capture-Startup.ps1'
+        (Get-Content (Join-Path $captureRoot 'Capture-Startup.ps1') -Raw) | Should Match ([regex]::Escape('$installWinget = $true'))
+        (Get-Content (Join-Path $captureRoot 'Capture-Startup.ps1') -Raw) | Should Match 'Repair-WinGetPackageManager -AllUsers'
         (Get-Content (Join-Path $captureRoot 'Capture-Baseline.ps1') -Raw) | Should Match 'Write-CaptureSnapshot'
         (Get-Content (Join-Path $captureRoot 'Capture-Baseline.ps1') -Raw) | Should Match 'BASELINE READY'
         (Get-Content (Join-Path $captureRoot 'Capture-Baseline.ps1') -Raw) | Should Match 'baseline-status.json'
@@ -424,7 +454,26 @@ Describe 'interactive Windows Sandbox capture' {
         (Get-Content (Join-Path $captureRoot 'Capture-Finalize.ps1') -Raw) | Should Match 'captureContext'
         $output | Should Match 'BASELINE READY'
         $output | Should Match 'WDAGUtilityAccount'
+        $output | Should Match 'Sandbox winget bootstrap:\s+enabled'
+        $session = Get-Content -LiteralPath (Join-Path $captureRoot 'session.json') -Raw | ConvertFrom-Json
+        $session.sandbox.installWinget | Should Be $true
         Assert-MockCalled Start-Process 1 -ModuleName WindowsAutoProfiles
+    }
+
+    It 'can skip sandbox winget bootstrap for capture start' {
+        $repo = Join-Path $TestDrive 'sandbox-capture-no-winget'
+        New-Item -ItemType Directory -Path (Join-Path $repo 'templates') -Force | Out-Null
+        Copy-Item -LiteralPath "$PSScriptRoot/../templates/capture" -Destination (Join-Path $repo 'templates/capture') -Recurse
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
+        Mock Get-Command { $null } -ParameterFilter { $Name -eq 'WindowsSandbox.exe' } -ModuleName WindowsAutoProfiles
+
+        $output = (Invoke-WapCli -Command capture -Arguments @('start', 'demo', '--no-winget') -RepositoryRoot $repo *>&1 | Out-String)
+
+        $captureRoot = Join-Path $repo '.capture/demo'
+        (Get-Content (Join-Path $captureRoot 'Capture-Startup.ps1') -Raw) | Should Match ([regex]::Escape('$installWinget = $false'))
+        $session = Get-Content -LiteralPath (Join-Path $captureRoot 'session.json') -Raw | ConvertFrom-Json
+        $session.sandbox.installWinget | Should Be $false
+        $output | Should Match 'Sandbox winget bootstrap:\s+disabled'
     }
 
     It 'summarizes and validates a dry-run capture manifest' {
@@ -570,7 +619,7 @@ Describe 'interactive Windows Sandbox capture' {
     It 'attaches, lists, edits, copies, and removes profile captures' {
         $repo = Join-Path $TestDrive 'profile-captures'
         New-Item -ItemType Directory -Path $repo -Force | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         New-Item -ItemType Directory -Path (Join-Path $repo 'profiles/dev'), (Join-Path $repo 'profiles/ops'), (Join-Path $repo '.capture/electronics/output') -Force | Out-Null
         @('name: dev', 'apps:') | Set-Content -LiteralPath (Join-Path $repo 'profiles/dev/profile.yaml')
         @('name: ops', 'apps:') | Set-Content -LiteralPath (Join-Path $repo 'profiles/ops/profile.yaml')
@@ -687,7 +736,7 @@ Describe 'profile deletion' {
     It 'supports WhatIf and deletes only an uninstalled profile definition' {
         $repo = Join-Path $TestDrive 'delete-profile'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         $profilePath = Join-Path $repo 'profiles/disposable'
         New-Item -ItemType Directory -Path $profilePath | Out-Null
         @('name: disposable', 'apps:') | Set-Content -LiteralPath (Join-Path $profilePath 'profile.yaml')
@@ -701,7 +750,7 @@ Describe 'profile deletion' {
     It 'refuses to delete an installed profile definition' {
         $repo = Join-Path $TestDrive 'delete-installed-profile'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         $profilePath = Join-Path $repo 'profiles/installed'
         New-Item -ItemType Directory -Path $profilePath | Out-Null
         @('name: installed', 'apps:') | Set-Content -LiteralPath (Join-Path $profilePath 'profile.yaml')
@@ -720,7 +769,7 @@ Describe 'profile uninstall' {
     It 'automatically deactivates an active profile before uninstalling it' {
         $repo = Join-Path $TestDrive 'uninstall-active-profile'
         New-Item -ItemType Directory -Path $repo | Out-Null
-        Initialize-Wap -RepositoryRoot $repo
+        Initialize-Wap -RepositoryRoot $repo -SkipPrereqs
         $state = Get-WapState -RepositoryRoot $repo
         $state.activeProfile = 'active'
         $state.profiles.active = [ordered]@{

@@ -2,7 +2,7 @@
 
 Version: 1.1
 
-Last updated: 2026-07-04T03:24:14Z
+Last updated: 2026-07-04T03:58:01Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -40,6 +40,9 @@ and stores that redirect.
     "enabled": true,
     "retentionDays": 30,
     "root": ".logs"
+  },
+  "sandbox": {
+    "installWinget": true
   }
 }
 ```
@@ -56,6 +59,7 @@ and stores that redirect.
 | `logging.enabled` | boolean | `true` | Enables timestamped per-command logs under `logging.root`. |
 | `logging.retentionDays` | integer | `30` | Deletes generated log files older than this many days after each command. Use `0` to disable automatic deletion. |
 | `logging.root` | string | `.logs` | Root where generated command logs are written. Environment variables are expanded at runtime. Relative paths resolve from the repository root. |
+| `sandbox.installWinget` | boolean | `true` | Installs winget in Windows Sandbox before baseline capture for `capture start`. Use `--no-winget` on a single capture start to override this. |
 
 ## Commands
 
@@ -78,6 +82,7 @@ profilesRoot          : %OneDrive%\WindowsAutoProfiles\profiles
 logging.enabled       : True
 logging.retentionDays : 30
 logging.root          : .logs
+sandbox.installWinget : True
 
 Dynamic resolved settings (read-only; computed at runtime from the configurable settings above):
 
@@ -124,6 +129,12 @@ directory. If it does not exist yet, WAP prints a warning and creates it the
 next time command logging starts. The command that changes `logging.root` keeps
 using the previously active logging directory; the new path applies on the next
 `wap.ps1` execution.
+
+Disable winget bootstrap inside Windows Sandbox captures by default:
+
+```powershell
+.\wap.ps1 config set sandbox.installWinget false
+```
 
 ## Environment variables
 

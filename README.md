@@ -5,7 +5,7 @@ workspaces from versioned YAML profiles.
 
 Version: 1.1
 
-Last updated: 2026-07-04T03:24:14Z
+Last updated: 2026-07-04T03:58:01Z
 
 Author: Michal Zygmunt <lahcim@fajne.com>
 
@@ -62,6 +62,13 @@ Set-Location .\WindowsAutoProfiles
 .\wap.ps1 --examples
 ```
 
+By default, `init` also checks/install prerequisites such as winget when
+missing. To skip prerequisite installation:
+
+```powershell
+.\wap.ps1 init --skip-prereqs
+```
+
 Configure where profile workspaces should be created:
 
 ```powershell
@@ -82,6 +89,7 @@ profilesRoot          : profiles
 logging.enabled       : True
 logging.retentionDays : 30
 logging.root          : .logs
+sandbox.installWinget : True
 
 Dynamic resolved settings (read-only; computed at runtime from the configurable settings above):
 
@@ -245,6 +253,10 @@ High-level flow:
 ```powershell
 .\wap.ps1 capture start kicad
 ```
+
+`capture start` installs winget inside the Sandbox before baseline capture by
+default. Use `--no-winget` to skip this for a single capture, or set
+`sandbox.installWinget` to `false` to change the default.
 
 Wait for:
 
