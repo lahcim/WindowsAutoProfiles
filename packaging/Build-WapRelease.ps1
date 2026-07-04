@@ -10,7 +10,11 @@ param(
 
     [switch] $SkipMsi,
 
-    [switch] $RequireMsi
+    [switch] $RequireMsi,
+
+    [string] $WixVersion = '7.0.0',
+
+    [switch] $AcceptWixEula
 )
 
 Set-StrictMode -Version Latest
@@ -174,7 +178,10 @@ function New-WapWixSource {
 }
 
 function Get-WapWixCommand {
-    param([Parameter(Mandatory)][string] $ToolRoot)
+    param(
+        [Parameter(Mandatory)][string] $ToolRoot,
+        [Parameter(Mandatory)][string] $Version
+    )
 
     $wix = Get-Command wix -ErrorAction SilentlyContinue
     if ($wix) {
@@ -194,8 +201,8 @@ function Get-WapWixCommand {
     $wixToolRoot = Join-Path $ToolRoot 'wix'
     New-Item -ItemType Directory -Path $wixToolRoot -Force | Out-Null
 
-    Write-Host "WiX Toolset CLI 'wix' was not found. Installing a local copy under '$wixToolRoot'..."
-    & $dotnet.Source tool install wix --tool-path $wixToolRoot
+    Write-Host "WiX Toolset CLI 'wix' was not found. Installing WiX Toolset CLI $Version under '$wixToolRoot'..."
+    & $dotnet.Source tool install wix --version $Version --tool-path $wixToolRoot
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install WiX Toolset CLI with dotnet tool install. Rerun with -SkipMsi to build only the ZIP package."
     }
@@ -229,10 +236,15 @@ Write-Host "Created ZIP package: $zipPath"
 
 if (-not $SkipMsi) {
     try {
-        $wixCommand = Get-WapWixCommand -ToolRoot (Join-Path $outputRootPath 'tools')
+        $wixCommand = Get-WapWixCommand -ToolRoot (Join-Path $outputRootPath 'tools') -Version $WixVersion
         $wxsPath = Join-Path $wixRoot 'WindowsAutoProfiles.wxs'
         New-WapWixSource -SourceRoot $packageRoot -DestinationPath $wxsPath -PackageVersion $Version
-        & $wixCommand build $wxsPath -out $msiPath
+        $wixBuildArgs = @('build')
+        if ($AcceptWixEula) {
+            $wixBuildArgs += @('-acceptEula', 'wix7')
+        }
+        $wixBuildArgs += @($wxsPath, '-out', $msiPath)
+        & $wixCommand @wixBuildArgs
         if ($LASTEXITCODE -ne 0) {
             throw "WiX build failed with exit code $LASTEXITCODE."
         }

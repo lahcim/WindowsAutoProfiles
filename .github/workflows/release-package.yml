@@ -57,13 +57,13 @@ jobs:
       - name: Install WiX Toolset
         shell: powershell
         run: |
-          dotnet tool install --global wix
+          dotnet tool install --global wix --version 7.0.0
           "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build ZIP and MSI
         shell: powershell
         run: |
-          .\packaging\Build-WapRelease.ps1 -Version '${{ inputs.version }}' -RequireMsi
+          .\packaging\Build-WapRelease.ps1 -Version '${{ inputs.version }}' -RequireMsi -AcceptWixEula
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v5
